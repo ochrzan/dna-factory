@@ -206,7 +206,7 @@ def load_snps(dir, min_freq):
             chromosome = 'unknown'
         loaded_snps[chromosome] = chrom_snps
         open_fn = open
-        if snp_file.endswith(".gz")
+        if snp_file.endswith(".gz"):
             open_fn = gzip.open
         with open_fn(snp_file) as f:
             items = yaml.load(f, Loader=yaml.FullLoader)
