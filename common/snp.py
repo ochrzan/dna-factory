@@ -4,6 +4,14 @@ Common classes used by different python functions
 
 import json
 
+def is_haploid(chromo, is_male):
+    """
+    Is this chromosome haploid (one allele per person)
+    :param chromo: chromosome letter or number (X, Y, MT or 1-22)
+    :param is_male: boolean if male
+    :return:
+    """
+    return (chromo == 'X' and is_male) or chromo == 'MT' or chromo == 'Y'
 
 class Allele:
 
