@@ -1,0 +1,30 @@
+# scenarios to define:
+# several sub-groups
+# multiple possible mutations per sub-group
+# less than 100% effect size (effect size per mutation?)
+# n of N mutations (2 out of 3)
+#
+
+group_a:
+  mutation_weights:
+    - 1
+    - 1
+    - 1
+  num_instances: 2
+  population_weight: 1
+  max_minor_allele_freq: 0.10
+
+group_b:
+  mutation_weights:
+    - 0.1
+    - 0.3
+    - 0.2
+    - 0.2
+    - 0.1
+    - 0.4
+    - 0.4
+    - 0.2
+    - 0.3
+  num_instances: 1
+  population_weight: 2
+  min_minor_allele_freq: 0.02

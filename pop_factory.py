@@ -9,10 +9,10 @@ Similar to http://cnsgenomics.com/software/gcta/#GWASSimulation ?
 """
 
 import getopt
+import json
 import random
 import sys
 import glob
-import yaml
 from common.snp import RefSNP, Allele, is_haploid
 from download import OUTPUT_DIR
 import re
@@ -20,11 +20,16 @@ import numpy
 import os
 from datetime import datetime
 import gzip
+from yaml import load, parse
+try:
+    from yaml import CLoader as Loader
+except ImportError:
+    from yaml import Loader
 
 MIN_SNP_FREQ = 0.005
 OUTPUT_DIR = "populations"
 SNP_DIR = "output"
-TEST_MODE = False
+
 
 class SNPTuples:
     """ Class for holding compressed snp and probability data
@@ -141,40 +146,45 @@ class PopulationFactory:
         """
         if not is_control:
             # pick pathogen groups for population size
-            pathogen_group_list = numpy.random.choices(
-                population=self.pathogens.values(),
-                weights=list(map(lambda x: x.population_weight), self.pathogens.values()),
+            pathogen_group_list = random.choices(
+                population=list(self.pathogens.values()),
+                weights=list(map(lambda x: x.population_weight, self.pathogens.values())),
                 k=size
             )
-
-        with open(self.population_dir + "population.ped", 'a+') as f:
+            pathogen_snps = {}
+        with open(self.population_dir + "population.ped", 'a+') as f,\
+                open(self.population_dir + "pop_pathogens.txt", "a+") as pp:
+            if is_control:
+                row = 1000000
+            else:
+                row = 5000000
             for i in range(size):
                 # Roll the dice for each snp and each allele. This will be a bit long for boys, but will work
                 randoms = numpy.random.rand(self.snp_count * 2)
                 is_male = randoms[0] < male_odds
                 snp_values = []
-                i = 0
-                row = 1
+                j = 0
+
                 # If in test group... Select a pathogen group, then select pathogen snps.
-                pathogen_snps = pathogen_group_list[i].select_mutations
+                if not is_control:
+                    pathogen_snps = pathogen_group_list[i].select_mutations()
                 for chromo, snps in self.ordered_snps:
                     if not is_male and chromo == 'Y':
                         continue  # Skip Y snps for women
                     for snp in snps:
-                        if is_control or not self.is_pathogen(snp.id):
-                            random_roll = randoms[i]
-                            i += 1
+                        if is_control or snp.id not in pathogen_snps:
+                            random_roll = randoms[j]
+                            j += 1
                             selected_nt = snp.pick_snp_value(random_roll)
                             if is_haploid(chromo, is_male):
                                 other_nt = selected_nt
                             else:
-                                random_roll = randoms[i]
-                                i += 1
+                                random_roll = randoms[j]
+                                j += 1
                                 other_nt = snp.pick_snp_value(random_roll)
                             snp_values.append(selected_nt)
                             snp_values.append(other_nt)
                         else:
-                            # TODO incorporate new PathogenGroups code to select which snps are active for this person
                             selected_nt = snp.pick_pathogen_value()
                             snp_values.append(selected_nt)
                             snp_values.append(selected_nt)
@@ -189,6 +199,9 @@ class PopulationFactory:
                 else:
                     affection = 2
                 f.write("\t".join(map(lambda x: str(x), [row, row, 0, 0, sex, affection])) + "\t" + "\t".join(snp_values) + "\n")
+                if not is_control:
+                    pp.write("%i\t%s\t" % (row, pathogen_group_list[i].name) +
+                             "\t".join(map(lambda x: "rs" + str(x), pathogen_snps.keys())) + "\n")
                 row += 1
 
     def pick_pathogen_snps(self, snp_data, pathogens_config):
@@ -200,27 +213,24 @@ class PopulationFactory:
         """
 
         with open(pathogens_config, 'r') as p:
-            pathogen_yml = yaml.load(p, Loader=yaml.FullLoader)
+            pathogen_yml = load(p, Loader=Loader)
             for group, group_attr in pathogen_yml.items():
                 iterations = 1
                 if group_attr['num_instances']:
                     iterations = int(group_attr['num_instances'])
                 for i in range(0, iterations):
-                    path_group = PathogenGroup.from_yml(group_attr, snp_data)
-                    self.pathogens[group + "-" + i] = path_group
+                    path_group = PathogenGroup.from_yml(group_attr, snp_data, "%s-%s" % (group, i))
+                    self.pathogens[path_group.name] = path_group
         with open(self.population_dir + "pathogens.txt", 'w') as f:
             for group_name, pathogen_group in self.pathogens.items():
                 f.write(str(group_name) + ":\n")
                 for snp_id, weight in pathogen_group.pathogens.items():
-                    f.write("%s\t%s\n" % (snp_id, weight))
-
-    def is_pathogen(self, snp_id):
-        return snp_id in self.pathogens
+                    f.write("rs%s\t%s\n" % (snp_id, weight))
 
 
 class PathogenGroup:
 
-    def __init__(self, mutation_weights, snp_data, population_weight,
+    def __init__(self, name, mutation_weights, snp_data, population_weight,
                  min_minor_allele_freq=0, max_minor_allele_freq=1.1):
         """
         Inits the pathogen dictionary to be random alleles matching the freq filters. pathogens dict
@@ -230,6 +240,7 @@ class PathogenGroup:
         :param population_weight: the weight this pathogen group has (shares in test population)
         """
         self.pathogens = {}
+        self.name = name
         self.population_weight = population_weight
         snp_id_list = []
         filter_snps = min_minor_allele_freq > 0 or max_minor_allele_freq < 0.5
@@ -246,7 +257,7 @@ class PathogenGroup:
             i += 1
 
     @classmethod
-    def from_yml(cls, yml_attr, snp_data):
+    def from_yml(cls, yml_attr, snp_data, name):
         min_minor_allele_freq = 0
         max_minor_allele_freq = 1
         if yml_attr.get('min_minor_allele_freq'):
@@ -262,7 +273,7 @@ class PathogenGroup:
                 raise Exception('max_minor_allele_freq must be between 0 and 0.5. yml value = {}'.format(
                     yml_attr['max_minor_allele_freq']))
 
-        return cls(yml_attr['mutation_weights'], snp_data, yml_attr['population_weight'],
+        return cls(name, yml_attr['mutation_weights'], snp_data, yml_attr['population_weight'],
                    min_minor_allele_freq, max_minor_allele_freq)
 
     def select_mutations(self):
@@ -272,7 +283,7 @@ class PathogenGroup:
         """
         selected_pathogens = {}
         shuffled_pathogens = list(self.pathogens.items())
-        random.shuffle(shuffled_pathogens) #Shuffle to randomly select
+        random.shuffle(shuffled_pathogens)  # Shuffle to randomly select
         agg_weight = 0
         for p in shuffled_pathogens:
             selected_pathogens[p[0]] = p[1]
@@ -282,14 +293,14 @@ class PathogenGroup:
         return selected_pathogens
 
 
-def load_snps(dir, min_freq):
+def load_snps(dir, min_freq, test_mode):
     # Seems the entire refSNP db might be in the order of 400 million SNPs so filtering will be needed
     # 95% of mutations in any persons's genome are from common mutations (>1% odds), though.
     # We may need to shrink to only include a subset using a min frequency threshold
-    if TEST_MODE:
-        snp_file_list = glob.glob(dir + "/*chr*sample.yml")
+    if test_mode:
+        snp_file_list = glob.glob('test' + "/*chr*sample.json*")
     else:
-        snp_file_list = glob.glob(dir + "/*chr*.yml*")
+        snp_file_list = glob.glob(dir + "/*chr18.json*")
     loaded_snps = {}
     for snp_file in snp_file_list:
         chrom_snps = {}
@@ -302,9 +313,15 @@ def load_snps(dir, min_freq):
         open_fn = open
         if snp_file.endswith(".gz"):
             open_fn = gzip.open
-        with open_fn(snp_file) as f:
-            items = yaml.load(f, Loader=yaml.FullLoader)
-            for name, alleles in items.items():
+        with open_fn(snp_file, 'rt') as f:
+            indel_count = 0
+            multi_nt_count = 0
+            small_sample_count = 0
+            low_freq_count = 0
+            for line in f:
+                snp_dict = json.loads(line)
+                name = snp_dict["id"]
+                alleles = snp_dict.get("alleles")
                 if not alleles:
                     continue
                 # find the most common allele
@@ -312,17 +329,23 @@ def load_snps(dir, min_freq):
                 total_count = 0
                 is_valid_for_plink = True
                 for allele in alleles:
-                    if not allele['deleted'] or not allele['inserted'] or allele['total_count'] < 1000:
-                        #Skip inserts, deletes and small samples
+                    if not allele['deleted'] or not allele['inserted']:
+                        # Skip inserts, deletes
                         is_valid_for_plink = False
+                        indel_count += 1
+                        break
+                    if allele['total_count'] < 1000:
+                        is_valid_for_plink = False
+                        small_sample_count += 1
                         break
                     if len(allele['inserted']) > 1 or len(allele['deleted']) > 1:
-                        #Skip multi-NT snps
+                        # Skip multi-NT snps
+                        multi_nt_count += 1
                         is_valid_for_plink = False
                         break
                     if allele['allele_count'] > max_allele_count:
                         max_allele_count = allele['allele_count']
-                        total_count = allele['total_count']
+                    total_count += allele['allele_count']
                 if not is_valid_for_plink:
                     continue
                 common_allele_freq = max_allele_count / total_count
@@ -333,9 +356,19 @@ def load_snps(dir, min_freq):
                         allele = Allele(allele_attr['deleted'], allele_attr['inserted'],
                                         allele_attr['seq_id'], allele_attr['position'])
                         allele.allele_count = allele_attr['allele_count']
-                        allele.total_count = allele_attr['total_count']
+                        # Use summed total count because some refSNP data does not add up.
+                        # Example with total larger than all counts https://www.ncbi.nlm.nih.gov/snp/rs28972095
+                        allele.total_count = total_count
                         snp.put_allele(allele)
                     chrom_snps[snp.id] = snp
+                else:
+                    low_freq_count += 1
+        print("Loaded SNPs from %s" % snp_file)
+        print("Skipped Indels:        %i" % indel_count)
+        print("Skipped Small Sample:  %i" % small_sample_count)
+        print("Skipped Multi-NT:      %i" % multi_nt_count)
+        print("Skipped Freq Filtered: %i" % low_freq_count)
+        print("Total Loaded:          %i" % len(chrom_snps))
     return loaded_snps
 
 
@@ -350,7 +383,7 @@ def print_help():
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "h?pfs:c:t", ["help"])
+        opts, args = getopt.getopt(argv, "h?p:fs:c:t", ["help"])
     except getopt.GetoptError as err:
         print(err.msg)
         print_help()
@@ -360,6 +393,7 @@ def main(argv):
     min_freq = MIN_SNP_FREQ
     male_odds = 0.5
     pathogens_file = 'pathogens.yml'
+    test_mode = False
     for opt, arg in opts:
         if opt in ('-h', "-?", "--help"):
             print_help()
@@ -375,8 +409,8 @@ def main(argv):
         elif opt in "-m":
             male_odds = float(opt)
         elif opt in "-t":
-            TEST_MODE = True
-    snps = load_snps(SNP_DIR, min_freq)
+            test_mode = True
+    snps = load_snps(SNP_DIR, min_freq, test_mode)
     pop_factory = PopulationFactory()
     pop_factory.generate_population(control_size, size, male_odds, snps, pathogens_file)
 

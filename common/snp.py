@@ -31,13 +31,13 @@ class Allele:
     def freq(self):
         return self.allele_count / self.total_count
 
-    def __str__(self):
-        return "- deleted: " + self.deleted \
-               + "\n  inserted: " + self.inserted \
-               + "\n  position: " + str(self.position) \
-               + "\n  seq_id: " + self.seq_id \
-               + "\n  allele_count: " + str(self.allele_count) \
-               + "\n  total_count: " + str(self.total_count)
+    def to_dict(self):
+        return {"deleted": self.deleted,
+                "inserted": self.inserted,
+                "position":  self.position,
+                "seq_id": self.seq_id,
+                "allele_count": self.allele_count,
+                "total_count": + self.total_count}
 
     @staticmethod
     def name_string(deleted, inserted):
@@ -83,9 +83,16 @@ class RefSNP:
                         ref_snp.alleles[name].add_observation(freq['allele_count'], freq['total_count'])
         return ref_snp
 
+    def total_allele_count(self):
+        sum_count = 0
+        for a in self.alleles.values():
+            sum_count += a.allele_count
+        return sum_count
+
     def __str__(self):
-        allele_str = ""
+        json_hash = {"id": self.id}
+        if len(self.alleles) > 0:
+            json_hash["alleles"] = []
         for allele in self.alleles.values():
-            if allele.allele_count > 0:
-                allele_str += "\n" + str(allele)
-        return self.id + ":" + allele_str + "\n"
+            json_hash["alleles"].append(allele.to_dict)
+        return json.dumps(json_hash)
