@@ -17,19 +17,20 @@ def get_pathogens(pop_path_file):
 
 
 def output_pathogens_rows(assoc_file, pathogens_dict):
+    print('******* Plink assoc lines for SNPs that are pathogens *****')
     with open(assoc_file, 'rt') as a:
         i = 0
         pathogen_rows = []
         for line in a:
             i += 1
             if i == 1:
-                print(line + "\tCases")
+                print(line.replace("\n", "") + "\tCases")
                 continue
             cols = line.split()
             p_value = cols[8]
             snp = cols[1]
             if snp in pathogens_dict:
-                pathogen_rows.append((line + "\t%i" % pathogens_dict[snp], p_value))
+                pathogen_rows.append((line.replace("\n", "") + "\t%i" % pathogens_dict[snp], p_value))
         pathogen_rows.sort(key=lambda x: x[1])
         for row in pathogen_rows:
             print(row[0])

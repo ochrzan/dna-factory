@@ -1,6 +1,7 @@
 output/
 tmp_download/
 populations/
+snps/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

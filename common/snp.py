@@ -3,6 +3,11 @@ Common classes used by different python functions
 """
 
 import json
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, Float, String, ForeignKey
+from sqlalchemy.orm import relationship
+Base = declarative_base()
+
 
 def is_haploid(chromo, is_male):
     """
@@ -13,7 +18,8 @@ def is_haploid(chromo, is_male):
     """
     return (chromo == 'X' and is_male) or chromo == 'MT' or chromo == 'Y'
 
-class Allele:
+
+class Allele(Base):
     """
     refsnp -> allele
     id        (id, refsnp_id, deleted, inserted, seq_id, position, allele_count)
@@ -21,6 +27,16 @@ class Allele:
     MAF
     total_count
     """
+    __tablename__ = "alleles"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    deleted = Column(String)
+    inserted = Column(String)
+    seq_id = Column(String)
+    position = Column(Integer)
+    allele_count = Column(Integer)
+    ref_snp_id = Column(Integer, ForeignKey('ref_snps.id'))
 
     def __init__(self, deleted, inserted, seq_id, position):
         self.name = Allele.name_string(deleted, inserted)
@@ -51,14 +67,21 @@ class Allele:
         return deleted + "->" + inserted
 
 
-class RefSNP:
+class RefSNP(Base):
+    __tablename__ = "ref_snps"
+
+    id = Column(Integer, primary_key=True)
+    chromosome = Column(String)
+    maf = Column(Float)
+    total_count = Column(Integer)
+    alleles = relationship("Allele")
 
     def __init__(self, ref_id):
         self.id = ref_id
-        self.alleles = {}
+        self.alleles = []
 
     def put_allele(self, allele):
-        self.alleles[allele.name] = allele
+        self.alleles.append(allele)
 
     @classmethod
     def from_json(cls, json_line):
@@ -86,13 +109,14 @@ class RefSNP:
                     obs = freq['observation']
                     name = Allele.name_string(obs['deleted_sequence'],
                                               obs['inserted_sequence'])
-                    if name in ref_snp.alleles:
-                        ref_snp.alleles[name].add_observation(freq['allele_count'], freq['total_count'])
+                    for allele in ref_snp.alleles:
+                        if name == allele.name:
+                            allele.add_observation(freq['allele_count'], freq['total_count'])
         return ref_snp
 
     def total_allele_count(self):
         sum_count = 0
-        for a in self.alleles.values():
+        for a in self.alleles:
             sum_count += a.allele_count
         return sum_count
 
@@ -100,6 +124,7 @@ class RefSNP:
         json_hash = {"id": self.id}
         if len(self.alleles) > 0:
             json_hash["alleles"] = []
-        for allele in self.alleles.values():
+        for allele in self.alleles:
             json_hash["alleles"].append(allele.to_dict)
         return json.dumps(json_hash)
+

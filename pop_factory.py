@@ -151,10 +151,6 @@ class PopulationFactory:
                             is_valid_for_plink = False
                             indel_count += 1
                             break
-                        if allele['total_count'] < 1000:
-                            is_valid_for_plink = False
-                            small_sample_count += 1
-                            break
                         if len(allele['inserted']) > 1 or len(allele['deleted']) > 1:
                             # Skip multi-NT snps
                             multi_nt_count += 1
@@ -163,6 +159,9 @@ class PopulationFactory:
                         if allele['allele_count'] > max_allele_count:
                             max_allele_count = allele['allele_count']
                         total_count += allele['allele_count']
+                    if total_count < 1000:
+                        is_valid_for_plink = False
+                        small_sample_count += 1
                     if not is_valid_for_plink:
                         continue
                     common_allele_freq = max_allele_count / total_count
@@ -204,12 +203,12 @@ class PopulationFactory:
             chromo_snps = []
             for snp in snp_data.values():
 
-                f.write("%s\trs%s\t0\t%s\n" % (chromo, snp.id, list(snp.alleles.values())[0].position))
+                f.write("%s\trs%s\t0\t%s\n" % (chromo, snp.id, snp.alleles[0].position))
                 # Make numpy array in same order for reference
                 # ideally each item would have a tuple of inserted value and probability
                 running_allele_count = 0
                 snp_tuple = SNPTuples(snp.id)
-                for allele in snp.alleles.values():
+                for allele in snp.alleles:
                     snp_tuple.add_tuple(allele.inserted,
                                        (allele.allele_count + running_allele_count) / allele.total_count)
                     running_allele_count += allele.allele_count
