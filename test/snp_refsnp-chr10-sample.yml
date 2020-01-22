@@ -1,0 +1,201 @@
+11821:
+11835:
+11867:
+  - deleted: G
+    inserted: G
+    position: 99397402
+    seq_id: NC_000010.11
+    allele_count: 167039
+    total_count: 174818
+  - deleted:
+    inserted: A
+    position: 99397402
+    seq_id: NC_000010.11
+    allele_count: 7779
+    total_count: 174818
+11872:
+  - deleted: G
+    inserted: G
+    position: 95237851
+    seq_id: NC_000010.11
+    allele_count: 166922
+    total_count: 174798
+  - deleted: G
+    inserted: AAC
+    position: 95237851
+    seq_id: NC_000010.11
+    allele_count: 7876
+    total_count: 174798
+11915:
+  - deleted: C
+    inserted: C
+    position: 84514545
+    seq_id: NC_000010.11
+    allele_count: 93211
+    total_count: 143430
+  - deleted: C
+    inserted:
+    position: 84514545
+    seq_id: NC_000010.11
+    allele_count: 50219
+    total_count: 143430
+11920:
+  - deleted: C
+    inserted: C
+    position: 5763894
+    seq_id: NC_000010.11
+    allele_count: 13688
+    total_count: 17650
+  - deleted: C
+    inserted: A
+    position: 5763894
+    seq_id: NC_000010.11
+    allele_count: 3962
+    total_count: 17650
+11952:
+  - deleted: C
+    inserted: C
+    position: 72230381
+    seq_id: NC_000010.11
+    allele_count: 125567
+    total_count: 125568
+  - deleted: C
+    inserted: G
+    position: 72230381
+    seq_id: NC_000010.11
+    allele_count: 1
+    total_count: 125568
+11972:
+  - deleted: A
+    inserted: A
+    position: 12165508
+    seq_id: NC_000010.11
+    allele_count: 112020
+    total_count: 174744
+  - deleted: A
+    inserted: G
+    position: 12165508
+    seq_id: NC_000010.11
+    allele_count: 62724
+    total_count: 174744
+11995:
+  - deleted: C
+    inserted: C
+    position: 20781763
+    seq_id: NC_000010.11
+    allele_count: 157953
+    total_count: 174784
+  - deleted: C
+    inserted: T
+    position: 20781763
+    seq_id: NC_000010.11
+    allele_count: 16831
+    total_count: 174784
+12020:
+  - deleted: C
+    inserted: C
+    position: 69632800
+    seq_id: NC_000010.11
+    allele_count: 173484
+    total_count: 555095
+  - deleted: C
+    inserted: T
+    position: 69632800
+    seq_id: NC_000010.11
+    allele_count: 381611
+    total_count: 555095
+12024:
+  - deleted: T
+    inserted: T
+    position: 7562686
+    seq_id: NC_000010.11
+    allele_count: 14556
+    total_count: 174790
+  - deleted: T
+    inserted: G
+    position: 7562686
+    seq_id: NC_000010.11
+    allele_count: 160234
+    total_count: 174790
+12028:
+  - deleted: C
+    inserted: C
+    position: 133207330
+    seq_id: NC_000010.11
+    allele_count: 181470
+    total_count: 187612
+  - deleted: C
+    inserted: G
+    position: 133207330
+    seq_id: NC_000010.11
+    allele_count: 6142
+    total_count: 187612
+12126:
+  - deleted: T
+    inserted: T
+    position: 12250565
+    seq_id: NC_000010.11
+    allele_count: 288254
+    total_count: 297900
+  - deleted: T
+    inserted: A
+    position: 12250565
+    seq_id: NC_000010.11
+    allele_count: 9646
+    total_count: 297900
+12131:
+12133:
+12162:
+  - deleted: A
+    inserted: A
+    position: 102480740
+    seq_id: NC_000010.11
+    allele_count: 110238
+    total_count: 170076
+  - deleted: A
+    inserted: G
+    position: 102480740
+    seq_id: NC_000010.11
+    allele_count: 59838
+    total_count: 170076
+12198:
+  - deleted: C
+    inserted: C
+    position: 49154884
+    seq_id: NC_000010.11
+    allele_count: 72154
+    total_count: 174772
+  - deleted: C
+    inserted: T
+    position: 49154884
+    seq_id: NC_000010.11
+    allele_count: 102618
+    total_count: 174772
+12216:
+  - deleted: T
+    inserted: T
+    position: 69401524
+    seq_id: NC_000010.11
+    allele_count: 164709
+    total_count: 174824
+  - deleted: T
+    inserted: C
+    position: 69401524
+    seq_id: NC_000010.11
+    allele_count: 10115
+    total_count: 174824
+12221:
+  - deleted: T
+    inserted: T
+    position: 17714596
+    seq_id: NC_000010.11
+    allele_count: 521653
+    total_count: 639538
+  - deleted: T
+    inserted: C
+    position: 17714596
+    seq_id: NC_000010.11
+    allele_count: 117885
+    total_count: 639538
+12270:
+12278:

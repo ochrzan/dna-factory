@@ -14,6 +14,13 @@ def is_haploid(chromo, is_male):
     return (chromo == 'X' and is_male) or chromo == 'MT' or chromo == 'Y'
 
 class Allele:
+    """
+    refsnp -> allele
+    id        (id, refsnp_id, deleted, inserted, seq_id, position, allele_count)
+    chromo
+    MAF
+    total_count
+    """
 
     def __init__(self, deleted, inserted, seq_id, position):
         self.name = Allele.name_string(deleted, inserted)

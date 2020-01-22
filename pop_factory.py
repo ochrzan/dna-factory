@@ -7,7 +7,7 @@ Generates fake data for similating possible scenarios for use in PLINK.
 
 Similar to http://cnsgenomics.com/software/gcta/#GWASSimulation ?
 """
-
+import gc
 import getopt
 import json
 import random
@@ -74,6 +74,7 @@ class SNPTuples:
                 self.minor_tuple = sorted_probabilities[1]
         return self.minor_tuple
 
+
 class PopulationFactory:
 
     # number of subgroups with phenotype, total number of hidden mutations
@@ -83,7 +84,7 @@ class PopulationFactory:
         self.snp_count = 0
         self.population_dir = OUTPUT_DIR
 
-    def generate_population(self, control_size, test_size, male_odds, snp_data, pathogens_file):
+    def generate_population(self, control_size, test_size, male_odds, pathogens_file, snps_dir, min_freq):
         """Generate a simulated population based on the number of groups, mutations, size of test group,
         size of control group and the snp dictionary.
         1. Determine which snps will be the hidden pathogenic snps
@@ -96,9 +97,8 @@ class PopulationFactory:
         self.population_dir = OUTPUT_DIR + "/" + subdir + "/"
         os.makedirs(self.population_dir, exist_ok=True)
 
-        # Create map file
-        self.output_map_file(snp_data)
-
+        self.load_snps(snps_dir, min_freq)
+        gc.collect()
         self.pick_pathogen_snps(self.ordered_snps, pathogens_file)
 
         # Create control population
@@ -106,34 +106,117 @@ class PopulationFactory:
         self.output_population(test_size, False, male_odds)
         return
 
-    def output_map_file(self, snp_data):
+    def load_snps(self, directory, min_freq):
         """
-        Outputs a map file used by plink (snps). Also sets self.ordered_snps to be a list of lists of tuples.
+        Loads snps from passed in directory looking for files in json format. Loaded as RefSNP object then
+        converted to a set of SNPTuples and output to a map file in the same order as the saved order.
+        :param directory: Directory to load for RefSNP data in json format
+        :param min_freq: Min frequency of the minor allele to be loaded. SNPs with a lower frequency will be
+        filtered out
+        :return: nothing
+        """
+        # Seems the entire refSNP db might be in the order of 400 million SNPs so filtering will be needed
+        # 95% of mutations in any persons's genome are from common mutations (>1% odds), though.
+        # We may need to shrink to only include a subset using a min frequency threshold
+
+        snp_file_list = glob.glob(directory + "/*chr*.json*")
+        for snp_file in snp_file_list:
+            chrom_snps = {}
+            chr_search = re.search('chr([0-9XYMT]+)', snp_file, re.IGNORECASE)
+            if chr_search:
+                chromosome = chr_search.group(1)
+            else:
+                chromosome = 'unknown'
+            open_fn = open
+            if snp_file.endswith(".gz"):
+                open_fn = gzip.open
+            with open_fn(snp_file, 'rt') as f:
+                indel_count = 0
+                multi_nt_count = 0
+                small_sample_count = 0
+                low_freq_count = 0
+                for line in f:
+                    snp_dict = json.loads(line)
+                    name = snp_dict["id"]
+                    alleles = snp_dict.get("alleles")
+                    if not alleles:
+                        continue
+                    # find the most common allele
+                    max_allele_count = 0
+                    total_count = 0
+                    is_valid_for_plink = True
+                    for allele in alleles:
+                        if not allele['deleted'] or not allele['inserted']:
+                            # Skip inserts, deletes
+                            is_valid_for_plink = False
+                            indel_count += 1
+                            break
+                        if allele['total_count'] < 1000:
+                            is_valid_for_plink = False
+                            small_sample_count += 1
+                            break
+                        if len(allele['inserted']) > 1 or len(allele['deleted']) > 1:
+                            # Skip multi-NT snps
+                            multi_nt_count += 1
+                            is_valid_for_plink = False
+                            break
+                        if allele['allele_count'] > max_allele_count:
+                            max_allele_count = allele['allele_count']
+                        total_count += allele['allele_count']
+                    if not is_valid_for_plink:
+                        continue
+                    common_allele_freq = max_allele_count / total_count
+                    if common_allele_freq <= (1 - min_freq):
+                        # If passes freq filter, then save it
+                        snp = RefSNP(name)
+                        for allele_attr in alleles:
+                            allele = Allele(allele_attr['deleted'], allele_attr['inserted'],
+                                            allele_attr['seq_id'], allele_attr['position'])
+                            allele.allele_count = allele_attr['allele_count']
+                            # Use summed total count because some refSNP data does not add up.
+                            # Example with total larger than all counts https://www.ncbi.nlm.nih.gov/snp/rs28972095
+                            allele.total_count = total_count
+                            snp.put_allele(allele)
+                        chrom_snps[snp.id] = snp
+                    else:
+                        low_freq_count += 1
+            self.output_map_file(chromosome, chrom_snps)
+            print("Loaded SNPs from %s" % snp_file)
+            print("Skipped Indels:        %i" % indel_count)
+            print("Skipped Small Sample:  %i" % small_sample_count)
+            print("Skipped Multi-NT:      %i" % multi_nt_count)
+            print("Skipped Freq Filtered: %i" % low_freq_count)
+            print("Total Loaded:          %i" % len(chrom_snps))
+
+    def output_map_file(self, chromo, snp_data):
+        """
+        Appends snps to a map file used by plink (snps). Also sets self.ordered_snps to be a list of lists of tuples.
+        self.ordered_snps is in the same order as the map file.
         One list per SNP that has a tuple per allele with the inserted value and probability range. For instance
         if a SNP has 3 alleles A (55%), T (25%), C (20%) the tuples would be ("A",0.55), ("T",0.8), ("C", 1.0)
-        :param snp_data: catalog of ReFSNP data (as loaded from yml files)
-        :return:
+        :param snp_data: catalog of ReFSNP data (as loaded from json files)
+        :param chromo: The chromosome these SNPs reside on
+        :return: nothing
         """
 
-        with open(self.population_dir + "population.map", 'w') as f:
-            for chromo, snps in snp_data.items():
-                # TODO save Y chromosome and MT DNA separtely.
-                chromo_snps = []
-                for snp in snps.values():
+        with open(self.population_dir + "population.map", 'at') as f:
 
-                    f.write("%s\trs%s\t0\t%s\n" % (chromo, snp.id, list(snp.alleles.values())[0].position))
-                    # Make numpy array in same order for reference
-                    # ideally each item would have a tuple of inserted value and probability
-                    running_allele_count = 0
-                    snp_tuple = SNPTuples(snp.id)
-                    for allele in snp.alleles.values():
-                        snp_tuple.add_tuple(allele.inserted,
-                                           (allele.allele_count + running_allele_count) / allele.total_count)
-                        running_allele_count += allele.allele_count
-                    chromo_snps.append(snp_tuple)
-                # Save each chromosome separately, but in an ordered list of tuples so the line up with the map file
-                self.snp_count += len(chromo_snps)
-                self.ordered_snps.append((chromo, chromo_snps))
+            chromo_snps = []
+            for snp in snp_data.values():
+
+                f.write("%s\trs%s\t0\t%s\n" % (chromo, snp.id, list(snp.alleles.values())[0].position))
+                # Make numpy array in same order for reference
+                # ideally each item would have a tuple of inserted value and probability
+                running_allele_count = 0
+                snp_tuple = SNPTuples(snp.id)
+                for allele in snp.alleles.values():
+                    snp_tuple.add_tuple(allele.inserted,
+                                       (allele.allele_count + running_allele_count) / allele.total_count)
+                    running_allele_count += allele.allele_count
+                chromo_snps.append(snp_tuple)
+            # Save each chromosome separately, but in an ordered list of tuples so the line up with the map file
+            self.snp_count += len(chromo_snps)
+            self.ordered_snps.append((chromo, chromo_snps))
 
     def output_population(self, size, is_control, male_odds):
         """
@@ -293,83 +376,6 @@ class PathogenGroup:
         return selected_pathogens
 
 
-def load_snps(dir, min_freq, test_mode):
-    # Seems the entire refSNP db might be in the order of 400 million SNPs so filtering will be needed
-    # 95% of mutations in any persons's genome are from common mutations (>1% odds), though.
-    # We may need to shrink to only include a subset using a min frequency threshold
-    if test_mode:
-        snp_file_list = glob.glob('test' + "/*chr*sample.json*")
-    else:
-        snp_file_list = glob.glob(dir + "/*chr18.json*")
-    loaded_snps = {}
-    for snp_file in snp_file_list:
-        chrom_snps = {}
-        chr_search = re.search('chr([0-9XYMT]+)', snp_file, re.IGNORECASE)
-        if chr_search:
-            chromosome = chr_search.group(1)
-        else:
-            chromosome = 'unknown'
-        loaded_snps[chromosome] = chrom_snps
-        open_fn = open
-        if snp_file.endswith(".gz"):
-            open_fn = gzip.open
-        with open_fn(snp_file, 'rt') as f:
-            indel_count = 0
-            multi_nt_count = 0
-            small_sample_count = 0
-            low_freq_count = 0
-            for line in f:
-                snp_dict = json.loads(line)
-                name = snp_dict["id"]
-                alleles = snp_dict.get("alleles")
-                if not alleles:
-                    continue
-                # find the most common allele
-                max_allele_count = 0
-                total_count = 0
-                is_valid_for_plink = True
-                for allele in alleles:
-                    if not allele['deleted'] or not allele['inserted']:
-                        # Skip inserts, deletes
-                        is_valid_for_plink = False
-                        indel_count += 1
-                        break
-                    if allele['total_count'] < 1000:
-                        is_valid_for_plink = False
-                        small_sample_count += 1
-                        break
-                    if len(allele['inserted']) > 1 or len(allele['deleted']) > 1:
-                        # Skip multi-NT snps
-                        multi_nt_count += 1
-                        is_valid_for_plink = False
-                        break
-                    if allele['allele_count'] > max_allele_count:
-                        max_allele_count = allele['allele_count']
-                    total_count += allele['allele_count']
-                if not is_valid_for_plink:
-                    continue
-                common_allele_freq = max_allele_count / total_count
-                if common_allele_freq <= (1 - min_freq):
-                    # If passes freq filter, then save it
-                    snp = RefSNP(name)
-                    for allele_attr in alleles:
-                        allele = Allele(allele_attr['deleted'], allele_attr['inserted'],
-                                        allele_attr['seq_id'], allele_attr['position'])
-                        allele.allele_count = allele_attr['allele_count']
-                        # Use summed total count because some refSNP data does not add up.
-                        # Example with total larger than all counts https://www.ncbi.nlm.nih.gov/snp/rs28972095
-                        allele.total_count = total_count
-                        snp.put_allele(allele)
-                    chrom_snps[snp.id] = snp
-                else:
-                    low_freq_count += 1
-        print("Loaded SNPs from %s" % snp_file)
-        print("Skipped Indels:        %i" % indel_count)
-        print("Skipped Small Sample:  %i" % small_sample_count)
-        print("Skipped Multi-NT:      %i" % multi_nt_count)
-        print("Skipped Freq Filtered: %i" % low_freq_count)
-        print("Total Loaded:          %i" % len(chrom_snps))
-    return loaded_snps
 
 
 def print_help():
@@ -383,17 +389,15 @@ def print_help():
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "h?p:fs:c:t", ["help"])
+        opts, args = getopt.getopt(argv, "h?p:fs:c:r:", ["help"])
     except getopt.GetoptError as err:
         print(err.msg)
         print_help()
         sys.exit(2)
-    subgroups = 1
-    num_mutations = 1
     min_freq = MIN_SNP_FREQ
     male_odds = 0.5
     pathogens_file = 'pathogens.yml'
-    test_mode = False
+    snp_dir = SNP_DIR
     for opt, arg in opts:
         if opt in ('-h', "-?", "--help"):
             print_help()
@@ -408,11 +412,10 @@ def main(argv):
             min_freq = float(arg)
         elif opt in "-m":
             male_odds = float(opt)
-        elif opt in "-t":
-            test_mode = True
-    snps = load_snps(SNP_DIR, min_freq, test_mode)
+        elif opt in "-r":
+            snp_dir = arg
     pop_factory = PopulationFactory()
-    pop_factory.generate_population(control_size, size, male_odds, snps, pathogens_file)
+    pop_factory.generate_population(control_size, size, male_odds, pathogens_file, snp_dir, min_freq)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
