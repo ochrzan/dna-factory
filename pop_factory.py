@@ -13,7 +13,7 @@ import json
 import random
 import sys
 import glob
-from common.snp import RefSNP, Allele, is_haploid
+from common.snp import RefSNP, Allele, is_haploid, chromosome_from_filename
 from download import OUTPUT_DIR
 import re
 import numpy
@@ -122,11 +122,8 @@ class PopulationFactory:
         snp_file_list = glob.glob(directory + "/*chr*.json*")
         for snp_file in snp_file_list:
             chrom_snps = {}
-            chr_search = re.search('chr([0-9XYMT]+)', snp_file, re.IGNORECASE)
-            if chr_search:
-                chromosome = chr_search.group(1)
-            else:
-                chromosome = 'unknown'
+            chromosome = chromosome_from_filename(snp_file)
+
             open_fn = open
             if snp_file.endswith(".gz"):
                 open_fn = gzip.open
@@ -170,7 +167,7 @@ class PopulationFactory:
                         snp = RefSNP(name)
                         for allele_attr in alleles:
                             allele = Allele(allele_attr['deleted'], allele_attr['inserted'],
-                                            allele_attr['seq_id'], allele_attr['position'])
+                                            allele_attr['position'])
                             allele.allele_count = allele_attr['allele_count']
                             # Use summed total count because some refSNP data does not add up.
                             # Example with total larger than all counts https://www.ncbi.nlm.nih.gov/snp/rs28972095

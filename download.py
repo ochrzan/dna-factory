@@ -24,7 +24,7 @@ def fetch_snp_file(json_file):
     with bz2.BZ2File(DOWNLOAD_DIR + '/' + json_file, 'rb') as f_in, \
             gzip.open(OUTPUT_DIR + '/snp_' + json_file.replace(".json.bz2", ".yml.gz"), 'w') as snp_out:
         for line in f_in:
-            snp = RefSNP.from_json(line)
+            snp = RefSNP.from_nih_json(line)
             # Only write snps with frequency data
             if snp.total_allele_count() > 0:
                 snp_out.write(str(snp) + "\n")

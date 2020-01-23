@@ -3,10 +3,19 @@ Common classes used by different python functions
 """
 
 import json
+import re
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, Float, String, ForeignKey
+from sqlalchemy import Column, Integer, Float, String, ForeignKey, orm
 from sqlalchemy.orm import relationship
 Base = declarative_base()
+
+
+def chromosome_from_filename(filename):
+    chr_search = re.search('chr([0-9XYMT]+)', filename, re.IGNORECASE)
+    if chr_search:
+        return chr_search.group(1)
+    else:
+        return 'unknown'
 
 
 def is_haploid(chromo, is_male):
@@ -30,22 +39,23 @@ class Allele(Base):
     __tablename__ = "alleles"
 
     id = Column(Integer, primary_key=True)
-    name = Column(String)
     deleted = Column(String)
     inserted = Column(String)
-    seq_id = Column(String)
     position = Column(Integer)
-    allele_count = Column(Integer)
-    ref_snp_id = Column(Integer, ForeignKey('ref_snps.id'))
+    allele_count = Column(Integer, index=True)
+    ref_snp_id = Column(Integer, ForeignKey('ref_snps.id'), nullable=False)
 
-    def __init__(self, deleted, inserted, seq_id, position):
+    def __init__(self, deleted, inserted, position):
         self.name = Allele.name_string(deleted, inserted)
         self.deleted = deleted
         self.inserted = inserted
-        self.seq_id = seq_id
         self.position = position
         self.allele_count = 0
         self.total_count = 0
+
+    @orm.reconstructor
+    def init_on_load(self):
+        self.name = Allele.name_string(self.deleted, self.inserted)
 
     def add_observation(self, allele_count, total_count):
         self.allele_count += int(allele_count)
@@ -62,6 +72,13 @@ class Allele(Base):
                 "allele_count": self.allele_count,
                 "total_count": + self.total_count}
 
+    @classmethod
+    def from_dict(cls, attr_dict):
+        a = cls(attr_dict["deleted"], attr_dict["inserted"], attr_dict["position"])
+        a.allele_count = attr_dict["allele_count"]
+        a.total_count = attr_dict["total_count"]
+        return a
+
     @staticmethod
     def name_string(deleted, inserted):
         return deleted + "->" + inserted
@@ -72,8 +89,8 @@ class RefSNP(Base):
 
     id = Column(Integer, primary_key=True)
     chromosome = Column(String)
-    maf = Column(Float)
-    total_count = Column(Integer)
+    maf = Column(Float, index=True)
+    total_count = Column(Integer, index=True)
     alleles = relationship("Allele")
 
     def __init__(self, ref_id):
@@ -84,7 +101,17 @@ class RefSNP(Base):
         self.alleles.append(allele)
 
     @classmethod
-    def from_json(cls, json_line):
+    def from_json(cls, json_line, chromosome):
+        ref_obj = json.loads(json_line)
+        ref_snp = cls(ref_obj['id'])
+        ref_snp.chromosome = str(chromosome)
+        for a in ref_obj['alleles']:
+            allele = Allele.from_dict(a)
+            ref_snp.put_allele(allele)
+        return ref_snp
+
+    @classmethod
+    def from_nih_json(cls, json_line):
         ref_obj = json.loads(json_line)
         ref_snp = cls(ref_obj['refsnp_id'])
         if 'primary_snapshot_data' in ref_obj:
@@ -101,7 +128,6 @@ class RefSNP(Base):
                         spdi = a['allele']['spdi']
                         allele = Allele(spdi['deleted_sequence'],
                                         spdi['inserted_sequence'],
-                                        spdi['seq_id'],
                                         spdi['position'])
                         ref_snp.put_allele(allele)
             for allele_annotation in ref_obj['primary_snapshot_data']['allele_annotations']:
