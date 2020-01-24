@@ -4,15 +4,18 @@ import glob
 import re
 from common.snp import RefSNP, Allele, chromosome_from_filename
 from common import Session, db_engine
+from sqlite3 import OperationalError
 
 
 def convert_json_to_db():
     snp_file_list = glob.glob("output/*chr*.json*")
     skip_filter = "chrAAA\\."
     # Clean out tables to be loaded
-    Allele.__table__.drop(db_engine)
-    RefSNP.__table__.drop(db_engine)
-
+    try:
+        Allele.__table__.drop(db_engine)
+        RefSNP.__table__.drop(db_engine)
+    except OperationalError as e:
+        print('Warning - Error droping tables before loading. Possible tables do not exist. Continuing')
     RefSNP.__base__.metadata.create_all(db_engine)
     filtered_list = list(filter(lambda x: not re.search(skip_filter, x), snp_file_list))
     with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
