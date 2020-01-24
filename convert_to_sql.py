@@ -7,8 +7,8 @@ from common import Session, db_engine
 
 
 def convert_json_to_db():
-    snp_file_list = glob.glob("output/*chr21.json*")
-    skip_filter = "chr(12|17|18|19|22|3|4|8|MT)\\."
+    snp_file_list = glob.glob("output/*chr*.json*")
+    skip_filter = "chrAAA\\."
     # Clean out tables to be loaded
     Allele.__table__.drop(db_engine)
     RefSNP.__table__.drop(db_engine)
