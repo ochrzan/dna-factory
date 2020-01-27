@@ -88,7 +88,7 @@ class RefSNP(Base):
     __tablename__ = "ref_snps"
 
     id = Column(Integer, primary_key=True)
-    chromosome = Column(String, Index=True)
+    chromosome = Column(String, index=True)
     maf = Column(Float, index=True)
     total_count = Column(Integer, index=True)
     alleles = relationship("Allele")
