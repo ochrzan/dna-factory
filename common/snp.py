@@ -166,7 +166,7 @@ class RefSNP(Base):
         update ref_snps set maf = 
         ( select sec_high * 1.0 / ref_snps.total_count  from 
             ( select a.ref_snp_id, max(a.allele_count) as sec_high from 
-                (select id, ref_snp_id, max(allele_count) as highest 
+                (select alleles.id, ref_snp_id, max(allele_count) as highest 
                  from alleles 
                  join ref_snps on ref_snps.id = alleles.ref_snp_id and ref_snps.chromosome = '%s'
                  group by ref_snp_id) as x
