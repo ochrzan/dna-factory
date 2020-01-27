@@ -24,6 +24,7 @@ def convert_json_to_db(append_mode):
     filtered_list = list(filter(lambda x: not re.search(skip_filter, x), snp_file_list))
     for f in filtered_list:
         # Start the load operations and mark each future with its file
+        print('Start loading %s into DB' % f)
         load_file_into_db(f)
         print('Successfully loaded %s into DB' % f)
     print('DONE')
