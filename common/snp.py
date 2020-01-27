@@ -90,7 +90,7 @@ class RefSNP(Base):
     id = Column(Integer, primary_key=True)
     chromosome = Column(String, index=True)
     maf = Column(Float, index=True)
-    total_count = Column(Integer, index=True)
+    total_count = Column(Integer)
     alleles = relationship("Allele")
 
     def __init__(self, ref_id):
