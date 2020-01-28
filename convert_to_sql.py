@@ -11,7 +11,7 @@ import sys
 
 def convert_json_to_db(append_mode):
     snp_file_list = glob.glob("output/*chr*.json*")
-    skip_filter = "chr(1|10|11|12|15|Y|MT)\\."
+    skip_filter = "chr(1|10|11|12|Y|MT)\\."
     # Clean out tables to be loaded
     if not append_mode:
         try:
