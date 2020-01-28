@@ -5,7 +5,7 @@ Common classes used by different python functions
 import json
 import re
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, Float, String, ForeignKey, orm
+from sqlalchemy import Column, Integer, Float, String, ForeignKey, orm, Index
 from sqlalchemy.orm import relationship
 Base = declarative_base()
 
@@ -88,10 +88,12 @@ class RefSNP(Base):
     __tablename__ = "ref_snps"
 
     id = Column(Integer, primary_key=True)
-    chromosome = Column(String, index=True)
+    chromosome = Column(String)
     maf = Column(Float, index=True)
     total_count = Column(Integer)
     alleles = relationship("Allele")
+
+    __table_args__ = (Index('ix_ref_snp_chromo_maf', "chromosome", "maf"), )
 
     def __init__(self, ref_id):
         self.id = ref_id
