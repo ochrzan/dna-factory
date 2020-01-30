@@ -1,10 +1,8 @@
-import concurrent.futures
 import gzip
 import glob
 import re
 import common.snp as common
 from common.db import db
-from sqlite3 import OperationalError
 import getopt
 import sys
 

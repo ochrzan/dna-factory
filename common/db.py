@@ -10,20 +10,20 @@ class DbLayer:
         self.metadata = MetaData()
 
         self.ref_snps = Table('ref_snps', self.metadata,
-                                  Column('id', Integer, primary_key=True),
-                                  Column('chromosome', String),
-                                  Column('maf', Float, index=True),
-                                  Column('total_count', Integer)
-                                  )
+                              Column('id', Integer, primary_key=True),
+                              Column('chromosome', String),
+                              Column('maf', Float, index=True),
+                              Column('total_count', Integer)
+                              )
 
         self.alleles = Table('alleles', self.metadata,
-                                 Column('id', Integer, primary_key=True),
-                                 Column('deleted', String),
-                                 Column('inserted', String),
-                                 Column('position', Integer),
-                                 Column('allele_count', Integer, index=True),
-                                 Column('ref_snp_id', Integer, ForeignKey('ref_snps.id'), nullable=False)
-                                 )
+                             Column('id', Integer, primary_key=True),
+                             Column('deleted', String),
+                             Column('inserted', String),
+                             Column('position', Integer),
+                             Column('allele_count', Integer, index=True),
+                             Column('ref_snp_id', Integer, ForeignKey('ref_snps.id'), nullable=False)
+                             )
 
     def db_init(self, conn_string):
         self.conn_string = conn_string

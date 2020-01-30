@@ -34,7 +34,7 @@ class PathogenGroupTest(unittest.TestCase):
         pg = pop_factory.PathogenGroup.from_yml({"mutation_weights": [0.5, 0.5, 0.5],
                                                  "num_instances": 2,
                                                  "population_weight": 5,
-                                                 "min_minor_allele_freq": 0.01}, self.snp_data)
+                                                 "min_minor_allele_freq": 0.01}, self.snp_data, "groupA")
         self.assertEqual(5, pg.population_weight, "Population Weight should be 5")
         self.assertEqual(3, len(pg.pathogens), "Should have picked 3 pathogens")
         self.assertEqual(2, len(pg.select_mutations()))

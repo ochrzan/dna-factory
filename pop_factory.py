@@ -276,7 +276,7 @@ class PopulationFactory:
         """
         if not is_control:
             # pick pathogen groups for population size
-            pathogen_group_list = PopulationFactory.pick_pathogen_groups(list(self.pathogens.values()))
+            pathogen_group_list = PopulationFactory.pick_pathogen_groups(list(self.pathogens.values()), size)
             pathogen_snps = {}
         with open(self.population_dir + "population.ped", 'a+') as f, \
                 open(self.population_dir + "pop_pathogens.txt", "a+") as pp:
