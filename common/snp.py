@@ -4,10 +4,6 @@ Common classes used by different python functions
 
 import json
 import re
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, Float, String, ForeignKey, orm, Index
-from sqlalchemy.orm import relationship
-Base = declarative_base()
 
 
 def chromosome_from_filename(filename):
@@ -16,6 +12,17 @@ def chromosome_from_filename(filename):
         return chr_search.group(1)
     else:
         return 'unknown'
+
+
+def obj_from_rowproxy(cls, row_proxy):
+    o = cls.__new__(cls)
+    for k, v in row_proxy.items():
+        try:
+            setattr(o, k, v)
+        except AttributeError as e:
+            print(str(e))
+            pass  # Skip unknown attributes
+    return o
 
 
 def is_haploid(chromo, is_male):
@@ -28,22 +35,10 @@ def is_haploid(chromo, is_male):
     return (chromo == 'X' and is_male) or chromo == 'MT' or chromo == 'Y'
 
 
-class Allele(Base):
+class Allele:
     """
-    refsnp -> allele
-    id        (id, refsnp_id, deleted, inserted, seq_id, position, allele_count)
-    chromo
-    MAF
-    total_count
+    Stores data representing an allele of a SNP
     """
-    __tablename__ = "alleles"
-
-    id = Column(Integer, primary_key=True)
-    deleted = Column(String)
-    inserted = Column(String)
-    position = Column(Integer)
-    allele_count = Column(Integer, index=True)
-    ref_snp_id = Column(Integer, ForeignKey('ref_snps.id'), nullable=False)
 
     def __init__(self, deleted, inserted, position):
         self.name = Allele.name_string(deleted, inserted)
@@ -52,10 +47,7 @@ class Allele(Base):
         self.position = position
         self.allele_count = 0
         self.total_count = 0
-
-    @orm.reconstructor
-    def init_on_load(self):
-        self.name = Allele.name_string(self.deleted, self.inserted)
+        self.ref_snp_id = None
 
     def add_observation(self, allele_count, total_count):
         self.allele_count += int(allele_count)
@@ -67,10 +59,10 @@ class Allele(Base):
     def to_dict(self):
         return {"deleted": self.deleted,
                 "inserted": self.inserted,
-                "position":  self.position,
+                "position": self.position,
                 "seq_id": self.seq_id,
                 "allele_count": self.allele_count,
-                "total_count": + self.total_count}
+                "total_count": self.total_count}
 
     @classmethod
     def from_dict(cls, attr_dict):
@@ -79,43 +71,61 @@ class Allele(Base):
         a.total_count = attr_dict["total_count"]
         return a
 
+    @classmethod
+    def from_row_proxy(cls, attr_dict):
+        a = cls(attr_dict["deleted"], attr_dict["inserted"], attr_dict["position"])
+        a.allele_count = attr_dict["allele_count"]
+        return a
+
+
     @staticmethod
     def name_string(deleted, inserted):
         return deleted + "->" + inserted
 
 
-class RefSNP(Base):
-    __tablename__ = "ref_snps"
+class RefSNP:
 
-    id = Column(Integer, primary_key=True)
-    chromosome = Column(String)
-    maf = Column(Float, index=True)
-    total_count = Column(Integer)
-    alleles = relationship("Allele")
-
-    __table_args__ = (Index('ix_ref_snp_chromo_maf', "chromosome", "maf"), )
-
-    def __init__(self, ref_id):
+    def __init__(self, ref_id, chromosome):
         self.id = ref_id
         self.alleles = []
+        self.total_count = None
+        self.maf = None
+        self.chromosome = chromosome
 
     def put_allele(self, allele):
+        allele.ref_snp_id = self.id
         self.alleles.append(allele)
+
+    def valid_for_plink(self):
+        for allele in self.alleles:
+            if not allele.inserted or not allele.deleted:
+                return False
+            if len(allele.deleted) > 1 or len(allele.inserted) > 1:
+                # Skip multi-NT snps
+                return False
+        return True
 
     @classmethod
     def from_json(cls, json_line, chromosome):
         ref_obj = json.loads(json_line)
-        ref_snp = cls(ref_obj['id'])
-        ref_snp.chromosome = str(chromosome)
+        ref_snp = cls(ref_obj['id'], str(chromosome))
         for a in ref_obj['alleles']:
             allele = Allele.from_dict(a)
             ref_snp.put_allele(allele)
         return ref_snp
 
     @classmethod
-    def from_nih_json(cls, json_line):
+    def from_row_proxy(cls, row):
+        o = cls(row['id'], row['chromosome'])
+        o.total_count = row['total_count']
+        o.maf = row['maf']
+        return o
+
+
+    @classmethod
+    def from_nih_json(cls, json_line, chromosome):
         ref_obj = json.loads(json_line)
-        ref_snp = cls(ref_obj['refsnp_id'])
+        ref_snp = cls(ref_obj['refsnp_id'], chromosome)
         if 'primary_snapshot_data' in ref_obj:
             placements = ref_obj['primary_snapshot_data']['placements_with_allele']
 
@@ -193,4 +203,6 @@ class RefSNP(Base):
         for allele in self.alleles:
             json_hash["alleles"].append(allele.to_dict)
         return json.dumps(json_hash)
+
+
 

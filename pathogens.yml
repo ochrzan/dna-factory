@@ -12,7 +12,7 @@ group_a:
     - 1
   num_instances: 5
   population_weight: 1
-  max_minor_allele_freq: 0.01
+  max_minor_allele_freq: 0.03
 
 group_b:
   mutation_weights:
@@ -27,4 +27,14 @@ group_b:
     - 0.3
   num_instances: 3
   population_weight: 2
-  min_minor_allele_freq: 0.02
+  min_minor_allele_freq: 0.05
+
+group_c:
+  mutation_weights:
+    - 0.5
+    - 0.5
+    - 0.5
+    - 0.5
+  num_instances: 10
+  population_weight: 1
+  min_minor_allele_freq: 0.05

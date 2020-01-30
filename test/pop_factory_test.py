@@ -2,15 +2,11 @@ import unittest
 import pop_factory
 
 def test_snp_tuple(snp_id):
-    snp_tuple = pop_factory.SNPTuples(snp_id)
+    snp_tuple = pop_factory.SNPTuples(snp_id, "1")
     snp_tuple.add_tuple("G", 0.20)
     snp_tuple.add_tuple("A", 0.70)
     snp_tuple.add_tuple("T", 1.0)
     return snp_tuple
-
-class PopulationFactoryTest(unittest.TestCase):
-    def test_something(self):
-        self.assertEqual(True, True)
 
 
 class SNPTupleTest(unittest.TestCase):
@@ -28,6 +24,7 @@ class SNPTupleTest(unittest.TestCase):
         picked = self.snp_tuple.pick_pathogen_value()
         self.assertEqual("T", picked, "Should pick T as pathogen (2nd most frequent)")
 
+
 class PathogenGroupTest(unittest.TestCase):
 
     def setUp(self):
@@ -41,6 +38,28 @@ class PathogenGroupTest(unittest.TestCase):
         self.assertEqual(5, pg.population_weight, "Population Weight should be 5")
         self.assertEqual(3, len(pg.pathogens), "Should have picked 3 pathogens")
         self.assertEqual(2, len(pg.select_mutations()))
+
+class PopulationFactoryTest(unittest.TestCase):
+
+    def setUp(self):
+        self.snp_tuples = [test_snp_tuple(100), test_snp_tuple(101), test_snp_tuple(102), test_snp_tuple(103), test_snp_tuple(104)]
+
+    def test_pathogen_groups(self):
+        groups = []
+        for x in range(1, 3):
+            groups.append(pop_factory.PathogenGroup("group%i" % x, [0.5, 0.5], self.snp_tuples, 1))
+        for x in range(3, 5):
+            groups.append(pop_factory.PathogenGroup("group%i" % x, [0.5, 0.5], self.snp_tuples, 10))
+
+        selected_groups = pop_factory.PopulationFactory.pick_pathogen_groups(groups, 100)
+        counts = {}
+        for s in selected_groups:
+            if not counts.get(s.name):
+                counts[s.name] = 0
+            counts[s.name] += 1
+        self.assertGreater(counts["group3"], 2)
+        self.assertLess(counts["group1"], 99)
+
 
 if __name__ == '__main__':
     unittest.main()

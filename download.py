@@ -5,7 +5,7 @@ from ftplib import FTP
 import gzip
 import re
 import os
-from common.snp import RefSNP
+from common.snp import RefSNP, chromosome_from_filename
 
 DBSNP_FTP_DOMAIN = 'ftp.ncbi.nih.gov'
 DBSNP_LATEST_DIR = '/snp/latest_release/JSON'
@@ -13,6 +13,8 @@ DBSNP_JSON_PATTERN = 'chr2.*.json.bz2$'
 #DBSNP_JSON_PATTERN = 'sample.*.json.bz2$'
 DOWNLOAD_DIR = 'tmp_download'
 OUTPUT_DIR = 'output'
+
+# TODO rewrite this to plop into DB
 
 def fetch_snp_file(json_file):
     # Not sure if ftplib is threadsafe so use a ftp login per call
@@ -22,9 +24,10 @@ def fetch_snp_file(json_file):
     with open(DOWNLOAD_DIR + '/' + json_file, 'wb') as f:
         ftp.retrbinary('RETR ' + json_file, f.write)
     with bz2.BZ2File(DOWNLOAD_DIR + '/' + json_file, 'rb') as f_in, \
-            gzip.open(OUTPUT_DIR + '/snp_' + json_file.replace(".json.bz2", ".yml.gz"), 'w') as snp_out:
+            gzip.open(OUTPUT_DIR + '/snp_' + json_file.replace(".json.bz2", ".json.gz"), 'w') as snp_out:
+        chromosome = chromosome_from_filename(json_file)
         for line in f_in:
-            snp = RefSNP.from_nih_json(line)
+            snp = RefSNP.from_nih_json(line, chromosome)
             # Only write snps with frequency data
             if snp.total_allele_count() > 0:
                 snp_out.write(str(snp) + "\n")

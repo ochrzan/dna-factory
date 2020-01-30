@@ -20,23 +20,29 @@ import numpy
 import os
 from datetime import datetime
 import gzip
-from yaml import load, parse
+from yaml import load
+from common.db import db
+
 try:
     from yaml import CLoader as Loader
 except ImportError:
     from yaml import Loader
 
 MIN_SNP_FREQ = 0.005
+MIN_TOTAL_COUNT = 1000
 OUTPUT_DIR = "populations"
 SNP_DIR = "output"
+CHROMOSOME_LIST = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15',
+                   '16', '17', '18', '19', '20', '21', '22', 'X', 'Y']
 
 
 class SNPTuples:
     """ Class for holding compressed snp and probability data
     """
 
-    def __init__(self, snp_id):
+    def __init__(self, snp_id, chromosome):
         self.id = snp_id
+        self.chromosome = chromosome
         self.tuples = []
         self.minor_tuple = None
 
@@ -84,7 +90,7 @@ class PopulationFactory:
         self.snp_count = 0
         self.population_dir = OUTPUT_DIR
 
-    def generate_population(self, control_size, test_size, male_odds, pathogens_file, snps_dir, min_freq):
+    def generate_population(self, control_size, test_size, male_odds, pathogens_file, min_freq, max_snps):
         """Generate a simulated population based on the number of groups, mutations, size of test group,
         size of control group and the snp dictionary.
         1. Determine which snps will be the hidden pathogenic snps
@@ -97,7 +103,7 @@ class PopulationFactory:
         self.population_dir = OUTPUT_DIR + "/" + subdir + "/"
         os.makedirs(self.population_dir, exist_ok=True)
 
-        self.load_snps(snps_dir, min_freq)
+        self.load_snps_db(min_freq, max_snps)
         gc.collect()
         self.pick_pathogen_snps(self.ordered_snps, pathogens_file)
 
@@ -106,8 +112,49 @@ class PopulationFactory:
         self.output_population(test_size, False, male_odds)
         return
 
-    def load_snps(self, directory, min_freq):
+    def load_snps_db(self, min_freq, max_snps):
         """
+        Load snps from DB and store as SNPTuples. Also output map file for plink.
+        :param max_snps: Max number of snps to load
+        :param min_freq: min Minor Allele frequency
+        :return:
+        """
+        with open(self.population_dir + "population.map", 'at') as f:
+            invalid_count = 0
+            snps_result = db.connection.execute(
+                "Select r.id, chromosome, maf, total_count,  deleted, inserted, position, allele_count "
+                "from ref_snps r  "
+                "join alleles a on r.id = a.ref_snp_id "
+                "and r.maf >= %f and r.total_count >= %i" % (min_freq, MIN_TOTAL_COUNT)
+            )
+            current_snp_id = -1
+            snp = None
+            for snp_row in snps_result:
+                if snp_row["id"] != current_snp_id:
+                    if snp and snp.valid_for_plink():
+                        if self.snp_count >= max_snps - 1:
+                            print("Hit max_snps size of %i. Stopping loading snps." % max_snps)
+                            break
+                        self.output_map_file_line(f, snp.chromosome, snp.id, snp.alleles[0].position)
+                        self.add_snp_tuple(snp)
+                        if self.snp_count % 100000 == 0:
+                            print("Loaded %i snps. %s" % (self.snp_count, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    else:
+                        invalid_count += 1
+                    # otherwise new snp row
+                    snp = RefSNP.from_row_proxy(snp_row)
+
+                # Added joined allele data every time
+                snp.put_allele(Allele.from_row_proxy(snp_row))
+                current_snp_id = snp_row["id"]
+            self.output_map_file_line(f, snp.chromosome, snp.id, snp.alleles[0].position)
+            self.add_snp_tuple(snp)
+        print("Skipped Invalid:        %i" % invalid_count)
+        print("Total Loaded:           %i" % len(self.ordered_snps))
+
+    def load_snps_json(self, directory, min_freq):
+        """
+        DEPRECATED
         Loads snps from passed in directory looking for files in json format. Loaded as RefSNP object then
         converted to a set of SNPTuples and output to a map file in the same order as the saved order.
         :param directory: Directory to load for RefSNP data in json format
@@ -164,7 +211,7 @@ class PopulationFactory:
                     common_allele_freq = max_allele_count / total_count
                     if common_allele_freq <= (1 - min_freq):
                         # If passes freq filter, then save it
-                        snp = RefSNP(name)
+                        snp = RefSNP(name, chromosome)
                         for allele_attr in alleles:
                             allele = Allele(allele_attr['deleted'], allele_attr['inserted'],
                                             allele_attr['position'])
@@ -176,7 +223,7 @@ class PopulationFactory:
                         chrom_snps[snp.id] = snp
                     else:
                         low_freq_count += 1
-            self.output_map_file(chromosome, chrom_snps)
+            self.output_map_file(chromosome, chrom_snps.values())
             print("Loaded SNPs from %s" % snp_file)
             print("Skipped Indels:        %i" % indel_count)
             print("Skipped Small Sample:  %i" % small_sample_count)
@@ -184,35 +231,39 @@ class PopulationFactory:
             print("Skipped Freq Filtered: %i" % low_freq_count)
             print("Total Loaded:          %i" % len(chrom_snps))
 
-    def output_map_file(self, chromo, snp_data):
+    def output_map_file_line(self, outstream, chromo, snp_id, position):
         """
-        Appends snps to a map file used by plink (snps). Also sets self.ordered_snps to be a list of lists of tuples.
-        self.ordered_snps is in the same order as the map file.
-        One list per SNP that has a tuple per allele with the inserted value and probability range. For instance
-        if a SNP has 3 alleles A (55%), T (25%), C (20%) the tuples would be ("A",0.55), ("T",0.8), ("C", 1.0)
+        Appends snps to a map file used by plink (snps).
         :param snp_data: catalog of ReFSNP data (as loaded from json files)
         :param chromo: The chromosome these SNPs reside on
         :return: nothing
         """
+        outstream.write("%s\trs%s\t0\t%s\n" % (chromo, snp_id, position))
 
-        with open(self.population_dir + "population.map", 'at') as f:
+    def add_snp_tuple(self, snp):
+        """
+        Adds snp to self.ordered_snps.
+        self.ordered_snps is in the same order as the map file.
+        One list per SNP that has a tuple per allele with the inserted value and probability range. For instance
+        if a SNP has 3 alleles A (55%), T (25%), C (20%) the tuples would be ("A",0.55), ("T",0.8), ("C", 1.0)"""
+        running_allele_count = 0
+        snp_tuple = SNPTuples(snp.id, snp.chromosome)
+        for allele in snp.alleles:
+            snp_tuple.add_tuple(allele.inserted,
+                                (allele.allele_count + running_allele_count) / snp.total_count)
+            running_allele_count += allele.allele_count
 
-            chromo_snps = []
-            for snp in snp_data.values():
-
-                f.write("%s\trs%s\t0\t%s\n" % (chromo, snp.id, snp.alleles[0].position))
-                # Make numpy array in same order for reference
-                # ideally each item would have a tuple of inserted value and probability
-                running_allele_count = 0
-                snp_tuple = SNPTuples(snp.id)
-                for allele in snp.alleles:
-                    snp_tuple.add_tuple(allele.inserted,
-                                       (allele.allele_count + running_allele_count) / allele.total_count)
-                    running_allele_count += allele.allele_count
-                chromo_snps.append(snp_tuple)
             # Save each chromosome separately, but in an ordered list of tuples so the line up with the map file
-            self.snp_count += len(chromo_snps)
-            self.ordered_snps.append((chromo, chromo_snps))
+        self.snp_count += 1
+        self.ordered_snps.append(snp_tuple)
+
+    @classmethod
+    def pick_pathogen_groups(cls, pathogen_groups, pop_size):
+        return random.choices(
+            population=list(pathogen_groups),
+            weights=list(map(lambda x: x.population_weight, pathogen_groups)),
+            k=pop_size
+        )
 
     def output_population(self, size, is_control, male_odds):
         """
@@ -225,13 +276,9 @@ class PopulationFactory:
         """
         if not is_control:
             # pick pathogen groups for population size
-            pathogen_group_list = random.choices(
-                population=list(self.pathogens.values()),
-                weights=list(map(lambda x: x.population_weight, self.pathogens.values())),
-                k=size
-            )
+            pathogen_group_list = PopulationFactory.pick_pathogen_groups(list(self.pathogens.values()))
             pathogen_snps = {}
-        with open(self.population_dir + "population.ped", 'a+') as f,\
+        with open(self.population_dir + "population.ped", 'a+') as f, \
                 open(self.population_dir + "pop_pathogens.txt", "a+") as pp:
             if is_control:
                 row = 1000000
@@ -247,28 +294,27 @@ class PopulationFactory:
                 # If in test group... Select a pathogen group, then select pathogen snps.
                 if not is_control:
                     pathogen_snps = pathogen_group_list[i].select_mutations()
-                for chromo, snps in self.ordered_snps:
-                    if not is_male and chromo == 'Y':
+                for snp in self.ordered_snps:
+                    if not is_male and snp.chromosome == 'Y':
                         continue  # Skip Y snps for women
-                    for snp in snps:
-                        if is_control or snp.id not in pathogen_snps:
+                    if is_control or snp.id not in pathogen_snps:
+                        random_roll = randoms[j]
+                        j += 1
+                        selected_nt = snp.pick_snp_value(random_roll)
+                        if is_haploid(snp.chromosome, is_male):
+                            other_nt = selected_nt
+                        else:
                             random_roll = randoms[j]
                             j += 1
-                            selected_nt = snp.pick_snp_value(random_roll)
-                            if is_haploid(chromo, is_male):
-                                other_nt = selected_nt
-                            else:
-                                random_roll = randoms[j]
-                                j += 1
-                                other_nt = snp.pick_snp_value(random_roll)
-                            snp_values.append(selected_nt)
-                            snp_values.append(other_nt)
-                        else:
-                            selected_nt = snp.pick_pathogen_value()
-                            snp_values.append(selected_nt)
-                            snp_values.append(selected_nt)
-                            # TODO make it so pathogens can be recessive or dominant
-                #Output row - Family ID, Indiv ID, Dad ID, MomID, Sex, affection, snps
+                            other_nt = snp.pick_snp_value(random_roll)
+                        snp_values.append(selected_nt)
+                        snp_values.append(other_nt)
+                    else:
+                        selected_nt = snp.pick_pathogen_value()
+                        snp_values.append(selected_nt)
+                        snp_values.append(selected_nt)
+                        # TODO make it so pathogens can be recessive or dominant
+                # Output row - Family ID, Indiv ID, Dad ID, MomID, Sex, affection, snps
                 if is_male:
                     sex = 1
                 else:
@@ -277,7 +323,8 @@ class PopulationFactory:
                     affection = 1
                 else:
                     affection = 2
-                f.write("\t".join(map(lambda x: str(x), [row, row, 0, 0, sex, affection])) + "\t" + "\t".join(snp_values) + "\n")
+                f.write("\t".join(map(lambda x: str(x), [row, row, 0, 0, sex, affection])) + "\t" + "\t".join(
+                    snp_values) + "\n")
                 if not is_control:
                     pp.write("%i\t%s\t" % (row, pathogen_group_list[i].name) +
                              "\t".join(map(lambda x: "rs" + str(x), pathogen_snps.keys())) + "\n")
@@ -321,15 +368,14 @@ class PathogenGroup:
         self.pathogens = {}
         self.name = name
         self.population_weight = population_weight
-        snp_id_list = []
+
         filter_snps = min_minor_allele_freq > 0 or max_minor_allele_freq < 0.5
-        for chromo, snps in snp_data:
-            filtered_list = snps
-            if filter_snps:
-                filtered_list = filter(
-                    lambda x: min_minor_allele_freq <= x.minor_allele_tuple()[1] <= max_minor_allele_freq,
-                    filtered_list)
-            snp_id_list.extend(list(map(lambda x: x.id, filtered_list)))
+        filtered_list = snp_data
+        if filter_snps:
+            filtered_list = filter(
+                lambda x: min_minor_allele_freq <= x.minor_allele_tuple()[1] <= max_minor_allele_freq,
+                filtered_list)
+        snp_id_list = list(map(lambda x: x.id, filtered_list))
         i = 0
         for snp_id in numpy.random.choice(a=snp_id_list, size=len(mutation_weights), replace=False):
             self.pathogens[snp_id] = mutation_weights[i]
@@ -366,12 +412,10 @@ class PathogenGroup:
         agg_weight = 0
         for p in shuffled_pathogens:
             selected_pathogens[p[0]] = p[1]
-            agg_weight += p[1] # sum the weights
+            agg_weight += p[1]  # sum the weights
             if agg_weight >= 1:
                 break
         return selected_pathogens
-
-
 
 
 def print_help():
@@ -380,18 +424,22 @@ def print_help():
     -s size of test group (afflicted group)
     -c size of control group
     -f min frequency for a SNP to be included in the list of SNPs, default is 0.005
+    -p location of pathogens config yaml file (default is pathogens.yml in working dir)
+    -m odds of a population member being male (default 0.5)
+    -x max number of snps to use 
     """)
 
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "h?p:fs:c:r:", ["help"])
+        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:", ["help"])
     except getopt.GetoptError as err:
         print(err.msg)
         print_help()
         sys.exit(2)
     min_freq = MIN_SNP_FREQ
     male_odds = 0.5
+    max_snps = 10000000
     pathogens_file = 'pathogens.yml'
     snp_dir = SNP_DIR
     for opt, arg in opts:
@@ -407,12 +455,13 @@ def main(argv):
         elif opt in "-f":
             min_freq = float(arg)
         elif opt in "-m":
-            male_odds = float(opt)
-        elif opt in "-r":
-            snp_dir = arg
+            male_odds = float(arg)
+        elif opt in "-x":
+            max_snps = int(arg)
     pop_factory = PopulationFactory()
-    pop_factory.generate_population(control_size, size, male_odds, pathogens_file, snp_dir, min_freq)
+    pop_factory.generate_population(control_size, size, male_odds, pathogens_file, min_freq, max_snps)
+
 
 if __name__ == '__main__':
+    db.default_init()
     main(sys.argv[1:])
-
