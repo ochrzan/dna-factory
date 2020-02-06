@@ -14,6 +14,17 @@ def chromosome_from_filename(filename):
         return 'unknown'
 
 
+def split_list(l, n):
+    chunk_size = round(len(l) / n)
+    for i in range(n):
+        start = i * chunk_size
+        if i + 1 == n:
+            end = len(l)
+        else:
+            end = (i + 1) * chunk_size
+        yield l[start:end]
+
+
 def obj_from_rowproxy(cls, row_proxy):
     o = cls.__new__(cls)
     for k, v in row_proxy.items():

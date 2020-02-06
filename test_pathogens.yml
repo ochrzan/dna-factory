@@ -12,7 +12,7 @@ group_a:
     - 1
   num_instances: 2
   population_weight: 1
-  max_minor_allele_freq: 0.10
+  max_minor_allele_freq: 0.40
 
 group_b:
   mutation_weights:

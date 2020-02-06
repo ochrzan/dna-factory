@@ -2,9 +2,9 @@ import unittest
 import pop_factory
 
 def test_snp_tuple(snp_id):
-    snp_tuple = pop_factory.SNPTuples(snp_id, "1")
-    snp_tuple.add_tuple("G", 0.20)
-    snp_tuple.add_tuple("A", 0.70)
+    snp_tuple = pop_factory.SNPTuples(snp_id, "1", 50000)
+    snp_tuple.add_tuple("G", 0.70)
+    snp_tuple.add_tuple("A", 0.90)
     snp_tuple.add_tuple("T", 1.0)
     return snp_tuple
 
@@ -18,11 +18,17 @@ class SNPTupleTest(unittest.TestCase):
         picked = self.snp_tuple.pick_snp_value(0.95)
         self.assertEqual("T", picked, "Should pick T")
         picked = self.snp_tuple.pick_snp_value(0.4)
-        self.assertEqual("A", picked, "Should pick A")
+        self.assertEqual("G", picked, "Should pick G")
+
+    def test_pick_allele_index(self):
+        picked = self.snp_tuple.pick_allele_index(0.95)
+        self.assertEqual(2, picked, "Should pick index 2")
+        picked = self.snp_tuple.pick_snp_value(0.4)
+        self.assertEqual(0, picked, "Should pick 0")
 
     def test_pick_pathogen(self):
         picked = self.snp_tuple.pick_pathogen_value()
-        self.assertEqual("T", picked, "Should pick T as pathogen (2nd most frequent)")
+        self.assertEqual("A", picked, "Should pick A as pathogen (2nd most frequent)")
 
 
 class PathogenGroupTest(unittest.TestCase):
