@@ -25,6 +25,13 @@ def convert_json_to_db(append_mode):
         print('Start loading %s into DB' % f)
         load_file_into_db(f)
         print('Successfully loaded %s into DB' % f)
+
+        # perform queries to set total_count and MAF
+    print('Updating total counts in ref_snps table')
+    common.RefSNP.update_total_counts(db.connection)
+
+    print('Updating maf in ref_snps table')
+    common.RefSNP.update_maf(db.connection)
     print('DONE')
 
 
@@ -47,12 +54,6 @@ def load_file_into_db(snp_file):
         db.bulk_insert(ins_ref_snps)
         db.bulk_insert(ins_alleles)
 
-        # perform queries to set total_count and MAF
-    print('Updating total counts in ref_snps table')
-    common.RefSNP.update_total_counts(chromosome, db.connection)
-
-    print('Updating maf in ref_snps table')
-    common.RefSNP.update_maf(chromosome, db.connection)
 
 
 if __name__ == '__main__':

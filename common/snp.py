@@ -71,7 +71,6 @@ class Allele:
         return {"deleted": self.deleted,
                 "inserted": self.inserted,
                 "position": self.position,
-                "seq_id": self.seq_id,
                 "allele_count": self.allele_count,
                 "total_count": self.total_count}
 
@@ -164,10 +163,9 @@ class RefSNP:
         return ref_snp
 
     @classmethod
-    def update_total_counts(cls, chromosome, session):
+    def update_total_counts(cls, session):
         """
         Slow function that updates all the total_counts based on sum of all allele counts for this ref_snp
-        :param chromosome: The chromosome data to update
         :param session: db session
         :return:
         """
@@ -175,15 +173,15 @@ class RefSNP:
         update ref_snps set total_count = 
         (select total_count from 
             (select ref_snp_id, sum(allele_count) as total_count from alleles 
-             join ref_snps on ref_snps.id = alleles.ref_snp_id and ref_snps.chromosome = '%s' group by ref_snp_id)
+             join ref_snps on ref_snps.id = alleles.ref_snp_id group by ref_snp_id)
          where
          ref_snps.id = ref_snp_id);
-        """ % chromosome
+        """
         session.execute(update_total_sql)
         session.commit()
 
     @classmethod
-    def update_maf(cls, chromosome, session):
+    def update_maf(cls, session):
         update_maf_sql = """
         --- MAF query
         update ref_snps set maf = 
@@ -191,13 +189,13 @@ class RefSNP:
             ( select a.ref_snp_id, max(a.allele_count) as sec_high from 
                 (select alleles.id, ref_snp_id, max(allele_count) as highest 
                  from alleles 
-                 join ref_snps on ref_snps.id = alleles.ref_snp_id and ref_snps.chromosome = '%s'
+                 join ref_snps on ref_snps.id = alleles.ref_snp_id
                  group by ref_snp_id) as x
               join alleles a on x.ref_snp_id = a.ref_snp_id and a.id != x.id 
               group by a.ref_snp_id) as s
           where ref_snps.id = s.ref_snp_id
         ) ;
-        """ % chromosome
+        """
         session.execute(update_maf_sql)
         session.commit()
 
