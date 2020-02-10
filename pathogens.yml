@@ -5,16 +5,26 @@
 # n of N mutations (2 out of 3)
 #
 
-group_a:
+group_one_of_three_rare:
   mutation_weights:
     - 1
     - 1
     - 1
-  num_instances: 5
+  num_instances: 2
   population_weight: 1
   max_minor_allele_freq: 0.03
 
-group_b:
+group_two_of_three_common:
+  mutation_weights:
+    - 0.5
+    - 0.5
+    - 0.5
+  num_instances: 2
+  population_weight: 2
+  max_minor_allele_freq: 0.20
+  min_minor_allele_freq: 0.10
+
+group_many_of_ten:
   mutation_weights:
     - 0.1
     - 0.3
@@ -24,17 +34,35 @@ group_b:
     - 0.4
     - 0.4
     - 0.2
+    - 0.3
     - 0.3
   num_instances: 3
   population_weight: 2
   min_minor_allele_freq: 0.05
 
-group_c:
+group_two_of_four:
   mutation_weights:
     - 0.5
     - 0.5
     - 0.5
     - 0.5
-  num_instances: 10
+  num_instances: 5
   population_weight: 1
+  min_minor_allele_freq: 0.05
+
+group_single:
+  mutation_weights:
+    - 1
+  num_instances: 1
+  population_weight: 2
+  max_minor_allele_freq: 0.10
+  min_minor_allele_freq: 0.01
+
+group_three_of_three:
+  mutation_weights:
+    - 0.3
+    - 0.3
+    - 0.4
+  num_instances: 1
+  population_weight: 2
   min_minor_allele_freq: 0.05
