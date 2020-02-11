@@ -15,7 +15,8 @@ import sys
 import glob
 from multiprocessing import Process, Queue, Condition
 import io
-from common.snp import RefSNP, Allele, is_haploid, chromosome_from_filename, split_list
+from common.snp import RefSNP, Allele, is_haploid, chromosome_from_filename,\
+    split_list, CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION
 from common.synchro import SynchCondition
 from download import OUTPUT_DIR
 import re
@@ -26,6 +27,7 @@ import gzip
 from yaml import load
 from common.db import db
 from common.timer import Timer
+from definitions import ROOT_DIR
 
 try:
     from yaml import CLoader as Loader
@@ -36,8 +38,7 @@ MIN_SNP_FREQ = 0.005
 MIN_TOTAL_COUNT = 1000
 OUTPUT_DIR = "populations"
 SNP_DIR = "output"
-CHROMOSOME_LIST = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15',
-                   '16', '17', '18', '19', '20', '21', '22', 'X', 'Y']
+
 
 
 def gen_vcf_header():
@@ -127,10 +128,76 @@ class SNPTuples:
         return ",".join(map(lambda x: x[0], self.tuples[1:]))
 
 
+class SnpFactory:
+
+    def __init__(self, cdf_matrix):
+        """
+        Expects a numpy array with col 1 the maf and col2 the CDF. Easiest to use init_from_cdf_file to load
+        values from a csv.
+        """
+        self.sorted_maf = cdf_matrix[:, 0]
+        self.cdf = cdf_matrix[:, 1]
+        cdf_shift = numpy.roll(numpy.append(self.cdf, 0), 1)
+        self.pdf = self.cdf - cdf_shift[0:len(self.cdf)]
+
+    @classmethod
+    def init_from_cdf_file(cls, file="snp_freq_cdf.csv"):
+        """
+        Inits from a csv file that maps snp MAF frequency to it's CDF (cumulative distribution function).
+        Default is to load from a CSV created from RefSNP freq probabilities across the entire genome.
+        :param file: csv file that maps a snp MAF freq to it's CDF. Col 1 is the MAF, Col 2 is CDF function.
+        Expects a header row
+        :return: new SnpFactory object
+        """
+        freq_counts = numpy.loadtxt(os.path.join(ROOT_DIR, file), skiprows=1, delimiter=",")
+        return cls(freq_counts)
+
+    def gen_mafs(self, size, min_maf):
+        start_maf_index = 0
+        for i, m in enumerate(self.sorted_maf):
+            if min_maf <= m:
+                start_maf_index = i
+                break
+        return numpy.random.choice(self.sorted_maf[start_maf_index:], size=size,
+                                   p=self.pdf[start_maf_index:] * 1 / numpy.sum(self.pdf[start_maf_index:]))
+
+    def gen_chromosomes(self, size):
+        return numpy.random.choice(CHROMOSOME_LIST, size=size, p=CHROMOSOME_PROB)
+
+    def random_snp_tuples(self, size, min_maf=0.005):
+        """
+        Generate a random SNPTuples object with a MAF based on picking a random chromosome, position and an
+        MAF that fits the RefSNP db distribution function for reported SNPs. Min MAF is 0.005. Max MAF is 0.50
+        MAFs are stepwise with 0.005 increments.
+        :param size: number of snptuples to generate
+        :return: Generated SNPTuples
+        """
+        chromosomes = self.gen_chromosomes(size)
+        mafs = self.gen_mafs(size, min_maf)
+        position_randoms = numpy.random.random(size)
+        nt_randoms = numpy.random.choice(["A", "T", "C", "G"], size=size * 2)
+        snp_tuples_list = []
+        for n, c in enumerate(chromosomes):
+            snp_tuple = SNPTuples(n + 1, c, int(position_randoms[n] * CHROMOSOME_MAX_POSITION[c]))
+            snp_tuple.add_tuple(nt_randoms[n * 2], 1 - mafs[n])
+            snp_tuple.add_tuple(nt_randoms[n * 2 + 1], 1.0)
+            snp_tuples_list.append(snp_tuple)
+        return snp_tuples_list
+
+
+def output_map_file_line(outstream, chromo, snp_id, position):
+    """
+    Appends snps to a map file used by plink (snps).
+    :param chromo: The chromosome these SNPs reside on
+    :return: nothing
+    """
+    outstream.write("%s\trs%s\t0\t%s\n" % (chromo, snp_id, position))
+
+
 class PopulationFactory:
 
     # number of subgroups with phenotype, total number of hidden mutations
-    def __init__(self, num_processes=1):
+    def __init__(self, num_processes=1, generate_snps=False):
         self.pathogens = {}
         self.ordered_snps = []
         self.snp_count = 0
@@ -139,6 +206,7 @@ class PopulationFactory:
             self.num_processes = num_processes
         else:
             self.num_processes = 1
+        self.generate_snps = generate_snps
 
     @Timer(logger=print, text="Finished Generating Population in {:0.4f} secs.")
     def generate_population(self, control_size, test_size, male_odds, pathogens_file, min_freq, max_snps):
@@ -153,8 +221,12 @@ class PopulationFactory:
         numpy.random.seed(int(datetime.now().strftime("%H%M%S")))
         self.population_dir = OUTPUT_DIR + "/" + subdir + "/"
         os.makedirs(self.population_dir, exist_ok=True)
-
-        self.load_snps_db(min_freq, max_snps)
+        if self.generate_snps:
+            snp_factory = SnpFactory.init_from_cdf_file()
+            self.ordered_snps = snp_factory.random_snp_tuples(max_snps)
+        else:
+            self.load_snps_db(min_freq, max_snps)
+        self.ordered_snps.sort(key=lambda x: x.chromosome)
         gc.collect()
         self.pick_pathogen_snps(self.ordered_snps, pathogens_file)
 
@@ -169,37 +241,37 @@ class PopulationFactory:
         :param min_freq: min Minor Allele frequency
         :return:
         """
-        with open(self.population_dir + "population.map", 'at') as f:
-            invalid_count = 0
-            snps_result = db.connection.execute(
-                "Select r.id, chromosome, maf, total_count,  deleted, inserted, position, allele_count "
-                "from ref_snps r  "
-                "join alleles a on r.id = a.ref_snp_id "
-                "and r.maf >= %f and r.total_count >= %i" % (min_freq, MIN_TOTAL_COUNT)
-            )
-            current_snp_id = -1
-            snp = None
-            for snp_row in snps_result:
-                if snp_row["id"] != current_snp_id:
-                    if snp and snp.valid_for_plink():
-                        if self.snp_count >= max_snps - 1:
-                            print("Hit max_snps size of %i. Stopping loading snps." % max_snps)
-                            break
-                        self.output_map_file_line(f, snp.chromosome, snp.id, snp.alleles[0].position)
-                        self.add_snp_tuple(snp)
-                        if self.snp_count % 100000 == 0:
-                            print("Loaded %i snps. %s" % (self.snp_count, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                    else:
-                        invalid_count += 1
-                    # otherwise new snp row
-                    snp = RefSNP.from_row_proxy(snp_row)
 
-                # Added joined allele data every time
-                snp.put_allele(Allele.from_row_proxy(snp_row))
-                current_snp_id = snp_row["id"]
-            # self.output_map_file_line(f, snp.chromosome, snp.id, snp.alleles[0].position)
-            self.add_snp_tuple(snp)
-        self.ordered_snps.sort(key=lambda x: x.chromosome)
+        invalid_count = 0
+        snps_result = db.connection.execute(
+            "Select r.id, chromosome, maf, total_count,  deleted, inserted, position, allele_count "
+            "from ref_snps r  "
+            "join alleles a on r.id = a.ref_snp_id "
+            "and r.maf >= %f and r.total_count >= %i" % (min_freq, MIN_TOTAL_COUNT)
+        )
+        current_snp_id = -1
+        snp = None
+        for snp_row in snps_result:
+            if snp_row["id"] != current_snp_id:
+                if snp and snp.valid_for_plink():
+                    if self.snp_count >= max_snps - 1:
+                        print("Hit max_snps size of %i. Stopping loading snps." % max_snps)
+                        break
+                    # output_map_file_line(f, snp.chromosome, snp.id, snp.alleles[0].position)
+                    self.add_snp_tuple(snp)
+                    if self.snp_count % 100000 == 0:
+                        print("Loaded %i snps. %s" % (self.snp_count, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                else:
+                    invalid_count += 1
+                # otherwise new snp row
+                snp = RefSNP.from_row_proxy(snp_row)
+
+            # Added joined allele data every time
+            snp.put_allele(Allele.from_row_proxy(snp_row))
+            current_snp_id = snp_row["id"]
+        # self.output_map_file_line(f, snp.chromosome, snp.id, snp.alleles[0].position)
+        # Add snp from last row of result
+        self.add_snp_tuple(snp)
         print("Skipped Invalid:        %i" % invalid_count)
         print("Total Loaded:           %i" % len(self.ordered_snps))
 
@@ -281,14 +353,6 @@ class PopulationFactory:
             print("Skipped Multi-NT:      %i" % multi_nt_count)
             print("Skipped Freq Filtered: %i" % low_freq_count)
             print("Total Loaded:          %i" % len(chrom_snps))
-
-    def output_map_file_line(self, outstream, chromo, snp_id, position):
-        """
-        Appends snps to a map file used by plink (snps).
-        :param chromo: The chromosome these SNPs reside on
-        :return: nothing
-        """
-        outstream.write("%s\trs%s\t0\t%s\n" % (chromo, snp_id, position))
 
     def add_snp_tuple(self, snp):
         """
@@ -388,10 +452,13 @@ class PopulationFactory:
         with gzip.open(main_file, 'wt+', compresslevel=6) as f:
             write_vcf_header(f, fam_data)
             for snp_list in chromo_chunked_snps:
+                if snp_list:
+                    print("Outputing VCF lines for chromosome %s" % snp_list[0].chromosome)
                 self.write_vcf_snps(fam_data, snp_list, f)
 
         print("Finished VCF file output.")
 
+    @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file, header=False):
         processes = []
         q = Queue(1000)
@@ -410,7 +477,6 @@ class PopulationFactory:
                 line = q.get()
                 file.write(line)
 
-    @Timer(text="Finished VCF SNP output Elapsed time: {:0.4f} seconds", logger=print)
     def queue_vcf_snps(self, fam_data, snps, q):
 
         num_samples = len(fam_data)

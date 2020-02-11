@@ -4,6 +4,65 @@ Common classes used by different python functions
 
 import json
 import re
+import os
+from random import random
+from definitions import ROOT_DIR
+
+import numpy
+
+CHROMOSOME_LIST = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15',
+                   '16', '17', '18', '19', '20', '21', '22', 'X', 'Y']
+CHROMOSOME_PROB = [0.07426087261566,
+                   0.07930487311426,
+                   0.06669253502772,
+                   0.068216704579376,
+                   0.060859452377757,
+                   0.061620602417568,
+                   0.056436996345677,
+                   0.052745283940636,
+                   0.041811456817423,
+                   0.047572674763057,
+                   0.046903788666524,
+                   0.045558978461098,
+                   0.033875108161329,
+                   0.030837930905743,
+                   0.028329099437382,
+                   0.030535626281104,
+                   0.026508783521902,
+                   0.026711126377244,
+                   0.022471493713103,
+                   0.021115686613365,
+                   0.013429462318399,
+                   0.013635819040166,
+                   0.048111412615406,
+                   0.002454231888101
+                   ]
+
+CHROMOSOME_MAX_POSITION = {
+    "1": 248946339,
+    "2": 242765766,
+    "3": 198235509,
+    "4": 190181952,
+    "5": 181477687,
+    "6": 170744571,
+    "7": 159335932,
+    "8": 145571444,
+    "9": 138258771,
+    "10": 133787363,
+    "11": 135076614,
+    "12": 133265032,
+    "13": 114352979,
+    "14": 107270972,
+    "15": 101981181,
+    "16": 90228323,
+    "17": 83247315,
+    "18": 80262386,
+    "19": 58607512,
+    "20": 64333614,
+    "21": 46699955,
+    "22": 50806829,
+    "X": 156040000,
+    "Y": 57217333}
 
 
 def chromosome_from_filename(filename):
@@ -87,7 +146,6 @@ class Allele:
         a.allele_count = attr_dict["allele_count"]
         return a
 
-
     @staticmethod
     def name_string(deleted, inserted):
         return deleted + "->" + inserted
@@ -130,7 +188,6 @@ class RefSNP:
         o.total_count = row['total_count']
         o.maf = row['maf']
         return o
-
 
     @classmethod
     def from_nih_json(cls, json_line, chromosome):
@@ -212,6 +269,3 @@ class RefSNP:
         for allele in self.alleles:
             json_hash["alleles"].append(allele.to_dict)
         return json.dumps(json_hash)
-
-
-
