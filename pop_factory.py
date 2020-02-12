@@ -175,12 +175,15 @@ class SnpFactory:
         chromosomes = self.gen_chromosomes(size)
         mafs = self.gen_mafs(size, min_maf)
         position_randoms = numpy.random.random(size)
-        nt_randoms = numpy.random.choice(["A", "T", "C", "G"], size=size * 2)
+        nt_randoms = numpy.random.choice(["A", "T", "C", "G"], size=size)
         snp_tuples_list = []
         for n, c in enumerate(chromosomes):
             snp_tuple = SNPTuples(n + 1, c, int(position_randoms[n] * CHROMOSOME_MAX_POSITION[c]))
-            snp_tuple.add_tuple(nt_randoms[n * 2], 1 - mafs[n])
-            snp_tuple.add_tuple(nt_randoms[n * 2 + 1], 1.0)
+            snp_tuple.add_tuple(nt_randoms[n], 1 - mafs[n])
+            remaining_nt = ["A", "T", "C", "G"]
+            remaining_nt.remove(nt_randoms[n])
+            alt_allele = random.choice(remaining_nt)
+            snp_tuple.add_tuple(alt_allele, 1.0)
             snp_tuples_list.append(snp_tuple)
         return snp_tuples_list
 
@@ -683,18 +686,22 @@ class PathogenGroup:
 def print_help():
     print("""
     Accepted Inputs are:
-    -s size of test group (afflicted group)
-    -c size of control group
-    -f min frequency for a SNP to be included in the list of SNPs, default is 0.005
-    -p location of pathogens config yaml file (default is pathogens.yml in working dir)
-    -m odds of a population member being male (default 0.5)
-    -x max number of snps to use 
+    -s n       size of test group (afflicted/case group)
+    -c n       size of control group
+    -f 0.n     min frequency for a SNP to be included in the list of SNPs, default is 0.005
+    -p <path>  location of pathogens config yaml file (default is pathogens.yml in working dir)
+    -m 0.n     odds of a population member being male (default 0.5)
+    -x n       max number of snps to load/use
+    -g         generate simulated snps from distribution instead of loading from refSNP data
+    -n n       number of worker processes to use 
+    This app uses a single writer process and multiple worker processes that generate rows for the writer. If disk is
+    slow the writer can bottleneck with a high worker process count (-n option).
     """)
 
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:", ["help"])
+        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:g", ["help"])
     except getopt.GetoptError as err:
         print(err.msg)
         print_help()
@@ -705,6 +712,7 @@ def main(argv):
     pathogens_file = 'pathogens.yml'
     snp_dir = SNP_DIR
     num_processes = 1
+    generate_snps = False
     for opt, arg in opts:
         if opt in ('-h', "-?", "--help"):
             print_help()
@@ -723,7 +731,9 @@ def main(argv):
             max_snps = int(arg)
         elif opt in "-n":
             num_processes = int(arg)
-    pop_factory = PopulationFactory(num_processes)
+        elif opt in "-g":
+            generate_snps = True
+    pop_factory = PopulationFactory(num_processes, generate_snps=generate_snps)
     pop_factory.generate_population(control_size, size, male_odds, pathogens_file, min_freq, max_snps)
 
 

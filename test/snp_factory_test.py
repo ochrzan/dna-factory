@@ -21,6 +21,7 @@ class SnpFactoryTest(unittest.TestCase):
         count_largest_maf = 0
         largest_maf = self.snp_factory.sorted_maf[len(self.snp_factory.sorted_maf) - 1]
         min_maf_works = True
+        alt_allele_same = False
         for s in snps:
             if s.chromosome == "1":
                 count_chromosome_one += 1
@@ -28,7 +29,9 @@ class SnpFactoryTest(unittest.TestCase):
                 count_largest_maf += 1
             if (1 - s.tuples[0][1]) < min_maf:
                 min_maf_works = False
+            alt_allele_same |= s.tuples[0][0] == s.tuples[1][0]
         self.assertTrue(min_maf_works, "Found tuple with MAF under the min_maf filter")
+        self.assertTrue(not alt_allele_same, "Found tuple with same nucleotide for alt and major")
         self.assertAlmostEqual(count_largest_maf * 1.0 / snps_size,
                                self.snp_factory.pdf[len(self.snp_factory.sorted_maf) - 1], delta=0.01)
         self.assertAlmostEqual(count_chromosome_one * 1.0 / snps_size, CHROMOSOME_PROB[0], delta=0.01)

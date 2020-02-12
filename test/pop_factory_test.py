@@ -1,6 +1,7 @@
 import unittest
 import pop_factory
 
+
 def test_snp_tuple(snp_id):
     snp_tuple = pop_factory.SNPTuples(snp_id, "1", 50000)
     snp_tuple.add_tuple("G", 0.70)
@@ -44,6 +45,7 @@ class PathogenGroupTest(unittest.TestCase):
         self.assertEqual(5, pg.population_weight, "Population Weight should be 5")
         self.assertEqual(3, len(pg.pathogens), "Should have picked 3 pathogens")
         self.assertEqual(2, len(pg.select_mutations()))
+
 
 class PopulationFactoryTest(unittest.TestCase):
 
