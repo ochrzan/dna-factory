@@ -694,6 +694,7 @@ def print_help():
     -x n       max number of snps to load/use
     -g         generate simulated snps from distribution instead of loading from refSNP data
     -n n       number of worker processes to use 
+    --chromosomes  allows providing a comma delimited list of chromosomes to filter on
     This app uses a single writer process and multiple worker processes that generate rows for the writer. If disk is
     slow the writer can bottleneck with a high worker process count (-n option).
     """)
@@ -701,7 +702,7 @@ def print_help():
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:g", ["help"])
+        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:g", ["help", "chromosomes:"])
     except getopt.GetoptError as err:
         print(err.msg)
         print_help()
@@ -713,6 +714,7 @@ def main(argv):
     snp_dir = SNP_DIR
     num_processes = 1
     generate_snps = False
+    chromosome_filter = None
     for opt, arg in opts:
         if opt in ('-h', "-?", "--help"):
             print_help()
@@ -733,10 +735,11 @@ def main(argv):
             num_processes = int(arg)
         elif opt in "-g":
             generate_snps = True
+    if not generate_snps:
+        db.default_init()
     pop_factory = PopulationFactory(num_processes, generate_snps=generate_snps)
     pop_factory.generate_population(control_size, size, male_odds, pathogens_file, min_freq, max_snps)
 
 
 if __name__ == '__main__':
-    db.default_init()
     main(sys.argv[1:])

@@ -173,6 +173,16 @@ class RefSNP:
                 return False
         return True
 
+    def set_maf_and_total_count(self):
+        if self.maf:
+            return
+        self.alleles.sort(key=lambda x: x.allele_count, reverse=True)
+        total_count = 0
+        for a in self.alleles:
+            total_count += a.allele_count
+        if total_count > 0 and len(self.alleles > 1):
+            self.maf = self.alleles[1].allele_count / total_count
+
     @classmethod
     def from_json(cls, json_line, chromosome):
         ref_obj = json.loads(json_line)
@@ -180,6 +190,7 @@ class RefSNP:
         for a in ref_obj['alleles']:
             allele = Allele.from_dict(a)
             ref_snp.put_allele(allele)
+        ref_snp.set_maf_and_total_count()
         return ref_snp
 
     @classmethod
@@ -217,6 +228,7 @@ class RefSNP:
                     for allele in ref_snp.alleles:
                         if name == allele.name:
                             allele.add_observation(freq['allele_count'], freq['total_count'])
+        ref_snp.set_maf_and_total_count()
         return ref_snp
 
     @classmethod
@@ -255,12 +267,6 @@ class RefSNP:
         """
         session.execute(update_maf_sql)
         session.commit()
-
-    def total_allele_count(self):
-        sum_count = 0
-        for a in self.alleles:
-            sum_count += a.allele_count
-        return sum_count
 
     def __str__(self):
         json_hash = {"id": self.id}
