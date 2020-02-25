@@ -1,0 +1,1 @@
+<h1>SNP Simulator</h1>

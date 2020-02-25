@@ -1,5 +1,13 @@
-from sqlalchemy import Column, Integer, Float, String, ForeignKey, Table, MetaData, create_engine
+import os
 
+from sqlalchemy import Column, Integer, Float, String, ForeignKey, Table, MetaData, create_engine
+from yaml import load
+try:
+    from yaml import CLoader as Loader
+except ImportError:
+    from yaml import Loader
+
+from definitions import ROOT_DIR
 
 class DbLayer:
 
@@ -32,9 +40,18 @@ class DbLayer:
         self.connection = self.engine.connect()
 
     def default_init(self):
-        self.db_init('sqlite:///snps/refSNP.db')
+        connect_string = 'sqlite:////' + os.path.join(ROOT_DIR, 'snps/refSNP.db')
+        db_yaml_file = os.path.join(ROOT_DIR, "db.yml")
+        if os.path.exists(db_yaml_file):
+            with open(db_yaml_file, 'r') as p:
+                pathogen_yml = load(p, Loader=Loader)
+                if pathogen_yml.get("connection_string"):
+                    connect_string = pathogen_yml["connection_sring"]
+        self.db_init(connect_string)
 
     def bulk_insert(self, objs, table):
+        if not objs or table is None:
+            return 0
         insert_vals = list(map(lambda x: vars(x), objs))
         return self.connection.execute(table.insert(), insert_vals)
 

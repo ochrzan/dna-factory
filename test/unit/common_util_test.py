@@ -4,7 +4,7 @@ from common.snp import split_list
 
 
 class SplitListTest(unittest.TestCase):
-    def test_something(self):
+    def test_split_list(self):
         x = list(range(100))
         y = list(split_list(x, 3))
         self.assertEqual(len(y), 3)

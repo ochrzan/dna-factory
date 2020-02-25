@@ -48,11 +48,13 @@ def load_file_into_db(snp_file):
             line_num += 1
             if line_num % 10000 == 0:
                 db.bulk_insert(ins_ref_snps)
+                db.connection.commit()
                 db.bulk_insert(ins_alleles)
                 ins_ref_snps = []
                 ins_alleles = []
         db.bulk_insert(ins_ref_snps)
         db.bulk_insert(ins_alleles)
+        db.connection.commit()
 
 
 

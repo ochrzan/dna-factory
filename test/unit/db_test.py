@@ -25,6 +25,11 @@ class DbTest(unittest.TestCase):
         result = db.bulk_insert([a1, a2], db.alleles)
         self.assertEqual(2, result.rowcount)
 
+    def test_default_init(self):
+        db.default_init()
+        self.assertTrue(True)
+
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -13,13 +13,10 @@ import json
 import random
 import sys
 import glob
-from multiprocessing import Process, Queue, Condition
-import io
+from multiprocessing import Process, Queue
 from common.snp import RefSNP, Allele, is_haploid, chromosome_from_filename,\
     split_list, CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION
-from common.synchro import SynchCondition
-from download import OUTPUT_DIR
-import re
+
 import numpy
 import os
 from datetime import datetime
@@ -464,7 +461,7 @@ class PopulationFactory:
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file, header=False):
         processes = []
-        q = Queue(1000)
+        q = Queue(10000)
         # Create a process for each split group
         n_processes = self.num_processes
         if len(snps) < n_processes:
@@ -692,7 +689,7 @@ def print_help():
     -p <path>  location of pathogens config yaml file (default is pathogens.yml in working dir)
     -m 0.n     odds of a population member being male (default 0.5)
     -x n       max number of snps to load/use
-    -g         generate simulated snps from distribution instead of loading from refSNP data
+    -l         load from refSNP datababse instead of using generate simulated snps
     -n n       number of worker processes to use 
     --chromosomes  allows providing a comma delimited list of chromosomes to filter on
     This app uses a single writer process and multiple worker processes that generate rows for the writer. If disk is
@@ -702,7 +699,7 @@ def print_help():
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:g", ["help", "chromosomes:"])
+        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:l", ["help", "chromosomes:"])
     except getopt.GetoptError as err:
         print(err.msg)
         print_help()
@@ -713,7 +710,7 @@ def main(argv):
     pathogens_file = 'pathogens.yml'
     snp_dir = SNP_DIR
     num_processes = 1
-    generate_snps = False
+    generate_snps = True
     chromosome_filter = None
     for opt, arg in opts:
         if opt in ('-h', "-?", "--help"):
@@ -733,8 +730,8 @@ def main(argv):
             max_snps = int(arg)
         elif opt in "-n":
             num_processes = int(arg)
-        elif opt in "-g":
-            generate_snps = True
+        elif opt in "-l":
+            generate_snps = False
     if not generate_snps:
         db.default_init()
     pop_factory = PopulationFactory(num_processes, generate_snps=generate_snps)

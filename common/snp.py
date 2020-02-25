@@ -180,7 +180,8 @@ class RefSNP:
         total_count = 0
         for a in self.alleles:
             total_count += a.allele_count
-        if total_count > 0 and len(self.alleles > 1):
+        self.total_count = total_count
+        if total_count > 0 and len(self.alleles) > 1:
             self.maf = self.alleles[1].allele_count / total_count
 
     @classmethod
@@ -266,6 +267,28 @@ class RefSNP:
         ) ;
         """
         session.execute(update_maf_sql)
+        session.commit()
+
+    @classmethod
+    def delete_chromosomes(cls, chromosomes, session):
+        """
+        Delete from DB all allele and refSNP records for the passed in chromosome list
+        :param chromosomes: list of chromosomes (strings) to delete
+        :param session: db session/connection
+        :return: nothing
+        """
+        chromo_in_clause = ",".join(map(lambda x: "'%s'" % x, chromosomes))
+        delete_alleles_sql = """
+        --- MAF query
+        delete from alleles where ref_snp_id in (select r.id from ref_snps r where chromosome in (%s))
+        """ % chromo_in_clause
+        session.execute(delete_alleles_sql)
+
+        delete_ref_snp_sql = """
+        --- MAF query
+        delete from ref_snps where id in (%s)
+        """ % chromo_in_clause
+        session.execute(delete_ref_snp_sql)
         session.commit()
 
     def __str__(self):
