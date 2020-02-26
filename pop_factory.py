@@ -607,6 +607,7 @@ Accepted Inputs are:
     
     This app uses a single writer process and multiple worker processes that generate rows for the writer. 
     If disk is slow the writer can bottleneck with a high worker process count (-n option).
+    Also, if more than 4 worker threads are used, lowering the compression level may improve speed.
     """)
 
 
@@ -651,6 +652,9 @@ def main(argv):
                 raise Exception("Compression level must be between 1 (least) and 9 (most)")
     if not generate_snps:
         db.default_init()
+    if not any("-z" in opt for opt in opts) and num_processes > 4:
+        print("Using lower compression level due to number of worker threads.")
+        compression_level = 2
     pop_factory = PopulationFactory(num_processes, generate_snps=generate_snps)
     pop_factory.generate_population(control_size, size, male_odds, pathogens_file, min_freq, max_snps, compression_level)
 
