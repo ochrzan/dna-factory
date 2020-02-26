@@ -199,7 +199,8 @@ class PopulationFactory:
         self.generate_snps = generate_snps
 
     @Timer(logger=print, text="Finished Generating Population in {:0.4f} secs.")
-    def generate_population(self, control_size, test_size, male_odds, pathogens_file, min_freq, max_snps):
+    def generate_population(self, control_size, test_size, male_odds, pathogens_file, min_freq, max_snps,
+                            compression_level=6):
         """Generate a simulated population based on the number of groups, mutations, size of test group,
         size of control group and the snp dictionary.
         1. Determine which snps will be the hidden pathogenic snps
@@ -221,7 +222,7 @@ class PopulationFactory:
         self.pick_pathogen_snps(self.ordered_snps, pathogens_file)
 
         # Create control population
-        self.output_vcf_population(control_size, test_size, male_odds)
+        self.output_vcf_population(control_size, test_size, male_odds, compression_level)
         return
 
     def load_snps_db(self, min_freq, max_snps):
@@ -332,7 +333,7 @@ class PopulationFactory:
 
         return sample_data
 
-    def output_vcf_population(self, control_size, test_size, male_odds):
+    def output_vcf_population(self, control_size, test_size, male_odds, compression_level):
         """
         Output a population .vcf file and companion .fam file.
         :param test_size: size of control group
@@ -358,7 +359,7 @@ class PopulationFactory:
                 cur_chromo = snp.chromosome
             cur_list.append(snp)
         chromo_chunked_snps.append(cur_list)
-        with gzip.open(main_file, 'wt+', compresslevel=6) as f:
+        with gzip.open(main_file, 'wt+', compresslevel=compression_level) as f:
             write_vcf_header(f, fam_data)
             for snp_list in chromo_chunked_snps:
                 if snp_list:
@@ -602,6 +603,7 @@ Accepted Inputs are:
     -x n       max number of snps to load/use
     -l         load from refSNP datababse instead of using simulated snps
     -n n       number of worker processes to use 
+    -z n       gzip compression level (1=least 9=most) default 6
     
     This app uses a single writer process and multiple worker processes that generate rows for the writer. 
     If disk is slow the writer can bottleneck with a high worker process count (-n option).
@@ -610,7 +612,7 @@ Accepted Inputs are:
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:l", ["help", "chromosomes:"])
+        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:z:l", ["help", "chromosomes:"])
     except getopt.GetoptError as err:
         print(err.msg)
         print_help()
@@ -622,6 +624,7 @@ def main(argv):
     num_processes = 1
     generate_snps = True
     chromosome_filter = None
+    compression_level = 6
     for opt, arg in opts:
         if opt in ('-h', "-?", "--help"):
             print_help()
@@ -642,10 +645,14 @@ def main(argv):
             num_processes = int(arg)
         elif opt in "-l":
             generate_snps = False
+        elif opt in "-z":
+            compression_level = int(arg)
+            if (9 < compression_level) or compression_level < 1:
+                raise Exception("Compression level must be between 1 (least) and 9 (most)")
     if not generate_snps:
         db.default_init()
     pop_factory = PopulationFactory(num_processes, generate_snps=generate_snps)
-    pop_factory.generate_population(control_size, size, male_odds, pathogens_file, min_freq, max_snps)
+    pop_factory.generate_population(control_size, size, male_odds, pathogens_file, min_freq, max_snps, compression_level)
 
 
 if __name__ == '__main__':
