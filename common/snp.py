@@ -4,11 +4,6 @@ Common classes used by different python functions
 
 import json
 import re
-import os
-from random import random
-from definitions import ROOT_DIR
-
-import numpy
 
 CHROMOSOME_LIST = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15',
                    '16', '17', '18', '19', '20', '21', '22', 'X', 'Y']
@@ -277,19 +272,16 @@ class RefSNP:
         :param session: db session/connection
         :return: nothing
         """
-        chromo_in_clause = ",".join(map(lambda x: "'%s'" % x, chromosomes))
+        chromo_in_clause = ",".join(map(lambda x: "\'%s\'" % x, chromosomes))
         delete_alleles_sql = """
-        --- MAF query
         delete from alleles where ref_snp_id in (select r.id from ref_snps r where chromosome in (%s))
         """ % chromo_in_clause
         session.execute(delete_alleles_sql)
 
         delete_ref_snp_sql = """
-        --- MAF query
-        delete from ref_snps where id in (%s)
+        delete from ref_snps where chromosome in (%s)
         """ % chromo_in_clause
         session.execute(delete_ref_snp_sql)
-        session.commit()
 
     def __str__(self):
         json_hash = {"id": self.id}

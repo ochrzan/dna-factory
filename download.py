@@ -25,6 +25,7 @@ def fetch_snp_file(json_file, queue, min_maf=0):
     Fetch a NIH refSNP file then open it and add RefSNP objects to the work queue.
     :param json_file: NIH file to download via FTP
     :param queue: work queue for RefSNP objects
+    :param min_maf minimum minor allele frequency. SNPs with a lower MAF will not be saved to database.
     :return:
     """
     # Not sure if ftplib is threadsafe so use a ftp login per call
@@ -98,6 +99,7 @@ def download_ref_snps(chromosome_list, num_workers=2, append=False, min_maf=0):
     """
     ftp = ftp_login()
     file_list = []
+    # Get a list of files for download
     ftp.retrlines('NLST', file_list.append)
     search_pattern = DBSNP_JSON_PATTERN % ".*"
     if chromosome_list:
@@ -106,27 +108,30 @@ def download_ref_snps(chromosome_list, num_workers=2, append=False, min_maf=0):
     json_for_dl = [f for f in file_list if re.search(search_pattern, f)]
     if not append:
         print("Removing old data from DB.")
-        try:
-            if not chromosome_list:
+
+        if not chromosome_list:
+            try:
                 print("No chromosome list specified. Clearing entire DB.")
                 db.ref_snps.drop(db.engine)
                 db.alleles.drop(db.engine)
-            else:
-                RefSNP.delete_chromosomes(chromosome_list, db.connection)
-        except:
-            print('Warning - Error droping tables before loading. Possible tables do not exist. Continuing')
+            except:
+                print('INFO - Exception raised droping tables. Possibly tables do not exist. Continuing on.')
+        else:
+            RefSNP.delete_chromosomes(chromosome_list, db.connection)
     # Create schema if missing
     db.metadata.create_all(db.engine)
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor, multiprocessing.Manager() as m:
         q = m.Queue(10000)
-        # Start the load operations and mark each future with its URL
+        # Start the load operations and save map of Future to filename
         future_to_file = {executor.submit(fetch_snp_file, json_file, q, min_maf): json_file for json_file in json_for_dl}
+        # Sleep a bit to wait for download threads to load the queue
         time.sleep(10)
         count_inserted = 0
         while any(not f.done() for f in future_to_file.keys()):
             try:
                 count_inserted += write_snps_to_db(q)
-                print("Inserted %i refSNPs." % count_inserted)
+                if count_inserted > 0:
+                    print("Inserted %i refSNPs." % count_inserted)
                 time.sleep(2)  # Wait for more items in the queue
             except Exception as e:
                 print("Exception writing snps to DB.")
@@ -142,21 +147,22 @@ def download_ref_snps(chromosome_list, num_workers=2, append=False, min_maf=0):
                 print('%r generated an exception: %s' % (filename, exc))
             else:
                 print('Successfully downloaded %s and loaded into db.' % filename)
-    m.shutdown()
 
 
 def print_help():
     print("""
-    download is used to download data from the NIH refSNP ftp site and load it into a database
-    Accepted Inputs are:
-    -c             allows providing a comma delimited list of chromosomes to load (ie 3,5,6,X)
-    --chromosomes  same as -c
-    -f 0.n         min minor allele frequency for a SNP to be loaded, default is 0 (no filtering)
-    -n n           number of worker processes to use
-    -a             run in append mode. Will not delete any existing data. This can cause primary key insert errors if
-                   a refSNP with the same ID is already in the database.
-    This app uses a single writer process and multiple worker download processes that generate records for the writer. 
-    If disk is slow the writer can bottleneck with a high worker process count (-n option).
+Download is used to download data from the NIH refSNP ftp site and load it into a database.
+    
+Accepted Inputs are:
+-c             Allows providing a comma delimited list of chromosomes to load (ie 3,5,6,X)
+--chromosomes  same as -c
+-f 0.n         Min minor allele frequency for a SNP to be loaded, default is 0 (no filtering)
+-n n           Number of worker processes to use (default 2)
+-a             Append mode. Will not delete any existing data. This can cause duplicate key errors.
+
+Database connection config is in db.yml
+This app uses a single writer process and multiple worker download processes that generate records for the writer. 
+If disk is slow the writer can bottleneck with a high worker process count (-n option).
     """)
 
 
@@ -168,7 +174,7 @@ if __name__ == '__main__':
         print(err.msg)
         print_help()
         sys.exit(2)
-    min_freq = None
+    min_freq = 0
     num_processes = 2
     chromosomes = None
     append = False

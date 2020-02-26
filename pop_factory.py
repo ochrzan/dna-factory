@@ -33,9 +33,7 @@ except ImportError:
 
 MIN_SNP_FREQ = 0.005
 MIN_TOTAL_COUNT = 1000
-OUTPUT_DIR = "populations"
-SNP_DIR = "output"
-
+OUTPUT_DIR = os.path.join(ROOT_DIR, "populations")
 
 
 def gen_vcf_header():
@@ -79,6 +77,7 @@ class SampleInfo:
 
     def is_male(self):
         return self.sex == 1
+
 
 class SNPTuples:
     """ Class for holding compressed snp and probability data
@@ -185,15 +184,6 @@ class SnpFactory:
         return snp_tuples_list
 
 
-def output_map_file_line(outstream, chromo, snp_id, position):
-    """
-    Appends snps to a map file used by plink (snps).
-    :param chromo: The chromosome these SNPs reside on
-    :return: nothing
-    """
-    outstream.write("%s\trs%s\t0\t%s\n" % (chromo, snp_id, position))
-
-
 class PopulationFactory:
 
     # number of subgroups with phenotype, total number of hidden mutations
@@ -257,7 +247,6 @@ class PopulationFactory:
                     if self.snp_count >= max_snps - 1:
                         print("Hit max_snps size of %i. Stopping loading snps." % max_snps)
                         break
-                    # output_map_file_line(f, snp.chromosome, snp.id, snp.alleles[0].position)
                     self.add_snp_tuple(snp)
                     if self.snp_count % 100000 == 0:
                         print("Loaded %i snps. %s" % (self.snp_count, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
@@ -269,97 +258,17 @@ class PopulationFactory:
             # Added joined allele data every time
             snp.put_allele(Allele.from_row_proxy(snp_row))
             current_snp_id = snp_row["id"]
-        # self.output_map_file_line(f, snp.chromosome, snp.id, snp.alleles[0].position)
-        # Add snp from last row of result
         self.add_snp_tuple(snp)
         print("Skipped Invalid:        %i" % invalid_count)
         print("Total Loaded:           %i" % len(self.ordered_snps))
-
-    def load_snps_json(self, directory, min_freq):
-        """
-        DEPRECATED
-        Loads snps from passed in directory looking for files in json format. Loaded as RefSNP object then
-        converted to a set of SNPTuples and output to a map file in the same order as the saved order.
-        :param directory: Directory to load for RefSNP data in json format
-        :param min_freq: Min frequency of the minor allele to be loaded. SNPs with a lower frequency will be
-        filtered out
-        :return: nothing
-        """
-        # Seems the entire refSNP db might be in the order of 400 million SNPs so filtering will be needed
-        # 95% of mutations in any persons's genome are from common mutations (>1% odds), though.
-        # We may need to shrink to only include a subset using a min frequency threshold
-
-        snp_file_list = glob.glob(directory + "/*chr*.json*")
-        for snp_file in snp_file_list:
-            chrom_snps = {}
-            chromosome = chromosome_from_filename(snp_file)
-
-            open_fn = open
-            if snp_file.endswith(".gz"):
-                open_fn = gzip.open
-            with open_fn(snp_file, 'rt') as f:
-                indel_count = 0
-                multi_nt_count = 0
-                small_sample_count = 0
-                low_freq_count = 0
-                for line in f:
-                    snp_dict = json.loads(line)
-                    name = snp_dict["id"]
-                    alleles = snp_dict.get("alleles")
-                    if not alleles:
-                        continue
-                    # find the most common allele
-                    max_allele_count = 0
-                    total_count = 0
-                    is_valid_for_plink = True
-                    for allele in alleles:
-                        if not allele['deleted'] or not allele['inserted']:
-                            # Skip inserts, deletes
-                            is_valid_for_plink = False
-                            indel_count += 1
-                            break
-                        if len(allele['inserted']) > 1 or len(allele['deleted']) > 1:
-                            # Skip multi-NT snps
-                            multi_nt_count += 1
-                            is_valid_for_plink = False
-                            break
-                        if allele['allele_count'] > max_allele_count:
-                            max_allele_count = allele['allele_count']
-                        total_count += allele['allele_count']
-                    if total_count < 1000:
-                        is_valid_for_plink = False
-                        small_sample_count += 1
-                    if not is_valid_for_plink:
-                        continue
-                    common_allele_freq = max_allele_count / total_count
-                    if common_allele_freq <= (1 - min_freq):
-                        # If passes freq filter, then save it
-                        snp = RefSNP(name, chromosome)
-                        for allele_attr in alleles:
-                            allele = Allele(allele_attr['deleted'], allele_attr['inserted'],
-                                            allele_attr['position'])
-                            allele.allele_count = allele_attr['allele_count']
-                            # Use summed total count because some refSNP data does not add up.
-                            # Example with total larger than all counts https://www.ncbi.nlm.nih.gov/snp/rs28972095
-                            allele.total_count = total_count
-                            snp.put_allele(allele)
-                        chrom_snps[snp.id] = snp
-                    else:
-                        low_freq_count += 1
-            self.output_map_file(chromosome, chrom_snps.values())
-            print("Loaded SNPs from %s" % snp_file)
-            print("Skipped Indels:        %i" % indel_count)
-            print("Skipped Small Sample:  %i" % small_sample_count)
-            print("Skipped Multi-NT:      %i" % multi_nt_count)
-            print("Skipped Freq Filtered: %i" % low_freq_count)
-            print("Total Loaded:          %i" % len(chrom_snps))
 
     def add_snp_tuple(self, snp):
         """
         Adds snp to self.ordered_snps.
         self.ordered_snps is in the same order as the map file.
-        One list per SNP that has a tuple per allele with the inserted value and probability range. For instance
-        if a SNP has 3 alleles A (55%), T (25%), C (20%) the tuples would be ("A",0.55), ("T",0.8), ("C", 1.0)"""
+        One list per SNP that has a tuple per allele with the inserted value and cummulative distribution range.
+        For instance if a SNP has 3 alleles A (55%), T (25%), C (20%) the tuples would be
+         ("A",0.55), ("T",0.8), ("C", 1.0)"""
         running_allele_count = 0
         snp_tuple = SNPTuples(snp.id, snp.chromosome, snp.alleles[0].position)
         snp.alleles.sort(key=lambda x: x.allele_count, reverse=True)
@@ -682,18 +591,20 @@ class PathogenGroup:
 
 def print_help():
     print("""
-    Accepted Inputs are:
+Population Factory generated simulated VCF files based on it's configuration. 
+
+Accepted Inputs are:
     -s n       size of test group (afflicted/case group)
     -c n       size of control group
-    -f 0.n     min frequency for a SNP to be included in the list of SNPs, default is 0.005
-    -p <path>  location of pathogens config yaml file (default is pathogens.yml in working dir)
+    -f 0.n     min minor allele frequency for a SNP to be included, default is 0.005
+    -p <path>  location of pathogens config yaml file (default is pathogens.yml)
     -m 0.n     odds of a population member being male (default 0.5)
     -x n       max number of snps to load/use
-    -l         load from refSNP datababse instead of using generate simulated snps
+    -l         load from refSNP datababse instead of using simulated snps
     -n n       number of worker processes to use 
-    --chromosomes  allows providing a comma delimited list of chromosomes to filter on
-    This app uses a single writer process and multiple worker processes that generate rows for the writer. If disk is
-    slow the writer can bottleneck with a high worker process count (-n option).
+    
+    This app uses a single writer process and multiple worker processes that generate rows for the writer. 
+    If disk is slow the writer can bottleneck with a high worker process count (-n option).
     """)
 
 
@@ -708,7 +619,6 @@ def main(argv):
     male_odds = 0.5
     max_snps = 10000000
     pathogens_file = 'pathogens.yml'
-    snp_dir = SNP_DIR
     num_processes = 1
     generate_snps = True
     chromosome_filter = None

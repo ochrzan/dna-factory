@@ -8,7 +8,6 @@ MIN_FREQ = 0.005
 
 def speed_test():
     load_via_sql()
-    load_via_json()
 
 
 def load_via_sql():
@@ -34,15 +33,6 @@ def load_via_sql():
     print("%s DB loading finished. %s elapsed" % (end.strftime("%Y-%m-%d %H:%M:%S"), str(end - start)))
     print("%i snps loaded from the DB" % len(ref_snps))
     return ref_snps
-
-
-def load_via_json():
-    start = datetime.now()
-    print("%s JSON loading started" % start.strftime("%Y-%m-%d %H:%M:%S"))
-    pf = pop_factory.PopulationFactory()
-    pf.load_snps_json("test_snp", MIN_FREQ)
-    end = datetime.now()
-    print("%s JSON loading finished. %s elapsed" % (end.strftime("%Y-%m-%d %H:%M:%S"), str(end - start)))
 
 
 if __name__ == '__main__':
