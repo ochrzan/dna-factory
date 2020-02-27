@@ -1,3 +1,9 @@
+import subprocess
+
+import numpy
+import common.timer as timer
+import gzip
+
 import pop_factory
 from common.snp import RefSNP, Allele, obj_from_rowproxy
 from common.db import db
@@ -35,5 +41,27 @@ def load_via_sql():
     return ref_snps
 
 
+def gzip_speed():
+
+    gzip_pipe = subprocess.Popen(args="gzip -c > tmp_file.gz", shell=True, stdin=subprocess.PIPE)
+    randos = []
+    for i in range(100000):
+        rands = numpy.random.rand(300)
+        string = " ".join(map(lambda x: str(x), rands))
+        randos.append(string)
+
+    with timer.Timer(logger=print, name="OS GZip") as t:
+
+        for r in randos:
+            gzip_pipe.stdin.write(r.encode())
+        gzip_pipe.stdin.close()
+        gzip_pipe.wait()
+
+    with timer.Timer(logger=print, name="GZipLib") as t, gzip.open("tmp2_file.gz", 'wt+', compresslevel=6) as f:
+        for r in randos:
+            f.write(r)
+
+
+
 if __name__ == '__main__':
-    speed_test()
+    gzip_speed()

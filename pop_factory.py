@@ -1,9 +1,5 @@
 """
-Generates fake data for similating possible scenarios for use in PLINK.
-
-1. Read config/command
-2. Read SNP data
-3. Generate PED/MAP files based on command and SNP data
+Generates fake data for simulating possible scenarios for use in PLINK or other bio analysis tools.
 
 Similar to http://cnsgenomics.com/software/gcta/#GWASSimulation ?
 """
@@ -12,9 +8,8 @@ import getopt
 import json
 import random
 import sys
-import glob
 from multiprocessing import Process, Queue
-from common.snp import RefSNP, Allele, is_haploid, chromosome_from_filename,\
+from common.snp import RefSNP, Allele, is_haploid, \
     split_list, CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION
 
 import numpy
@@ -36,20 +31,15 @@ MIN_TOTAL_COUNT = 1000
 OUTPUT_DIR = os.path.join(ROOT_DIR, "populations")
 
 
-def gen_vcf_header():
+def gen_vcf_header(fam_data):
     header = "##fileformat=VCFv4.3\n"
     header += "##filedate=%s\n" % datetime.now().strftime("%Y%m%d %H:%M")
     header += "##source=SNP_Simulator\n"
     header += '##FILTER=<ID=q10,Description="Quality below 10">\n'
     header += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+    header += "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t"
+    header += "\t".join(map(lambda x: str(x.person_id), fam_data)) + "\n"
     return header
-
-
-def write_vcf_header(io_stream, fam_data):
-    io_stream.write(gen_vcf_header())
-    io_stream.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t")
-    io_stream.write("\t".join(map(lambda x: str(x.person_id), fam_data)))
-    io_stream.write("\n")
 
 
 class SampleInfo:
@@ -123,6 +113,23 @@ class SNPTuples:
             return self.tuples[1][0]
         return ",".join(map(lambda x: x[0], self.tuples[1:]))
 
+    def __str__(self):
+        json_hash = {"id": self.id, "chromosome": self.chromosome, "position": self.position}
+        if len(self.tuples) > 0:
+            json_hash["tuples"] = {}
+        for t in self.tuples:
+            json_hash["tuples"][t[0]] = t[1]
+        return json.dumps(json_hash)
+
+    @classmethod
+    def from_json(cls, json_line):
+        ref_obj = json.loads(json_line)
+        snp_tuples = cls(ref_obj['id'], ref_obj["chromosome"], ref_obj["position"])
+        if "tuples" in ref_obj:
+            for i, f in ref_obj['tuples']:
+                snp_tuples.add_tuple(i, f)
+        return snp_tuples
+
 
 class SnpFactory:
 
@@ -187,19 +194,24 @@ class SnpFactory:
 class PopulationFactory:
 
     # number of subgroups with phenotype, total number of hidden mutations
-    def __init__(self, num_processes=1, generate_snps=False):
+    def __init__(self, num_processes=1, generate_snps=False, male_odds=0.5, pathogens_config=None,
+                 pathogens_list_path=None, sample_id_offset=0):
         self.pathogens = {}
         self.ordered_snps = []
         self.snp_count = 0
         self.population_dir = OUTPUT_DIR
+        self.male_odds = male_odds
         if num_processes > 0:
             self.num_processes = num_processes
         else:
             self.num_processes = 1
         self.generate_snps = generate_snps
+        self.pathogens_config = pathogens_config
+        self.sample_id_offset = sample_id_offset
+        self.pathogens_list_path = pathogens_list_path
 
     @Timer(logger=print, text="Finished Generating Population in {:0.4f} secs.")
-    def generate_population(self, control_size, test_size, male_odds, pathogens_file, min_freq, max_snps,
+    def generate_population(self, control_size, test_size, min_freq, max_snps,
                             compression_level=6):
         """Generate a simulated population based on the number of groups, mutations, size of test group,
         size of control group and the snp dictionary.
@@ -212,6 +224,7 @@ class PopulationFactory:
         numpy.random.seed(int(datetime.now().strftime("%H%M%S")))
         self.population_dir = OUTPUT_DIR + "/" + subdir + "/"
         os.makedirs(self.population_dir, exist_ok=True)
+        # TODO Read in snps if provided path to snps file
         if self.generate_snps:
             snp_factory = SnpFactory.init_from_cdf_file()
             self.ordered_snps = snp_factory.random_snp_tuples(max_snps)
@@ -219,11 +232,19 @@ class PopulationFactory:
             self.load_snps_db(min_freq, max_snps)
         self.ordered_snps.sort(key=lambda x: x.chromosome)
         gc.collect()
-        self.pick_pathogen_snps(self.ordered_snps, pathogens_file)
-
+        # TODO Read in pathogen groups if provided path
+        self.pick_pathogen_snps(self.ordered_snps, self.pathogens_config)
+        self.output_snps()
         # Create control population
-        self.output_vcf_population(control_size, test_size, male_odds, compression_level)
+        # TODO Pass through sample offset
+        self.output_vcf_population(control_size, test_size, self.male_odds, compression_level)
         return
+
+    @Timer(logger=print, name="PopFactory.output_snps()", text="Time to write snps file {:0.4f} seconds")
+    def output_snps(self):
+        with gzip.open(self.population_dir + "snps.json.gz", 'wt', compresslevel=5) as f:
+            for t in self.ordered_snps:
+                f.write(str(t) + "\n")
 
     def load_snps_db(self, min_freq, max_snps):
         """
@@ -360,7 +381,8 @@ class PopulationFactory:
             cur_list.append(snp)
         chromo_chunked_snps.append(cur_list)
         with gzip.open(main_file, 'wt+', compresslevel=compression_level) as f:
-            write_vcf_header(f, fam_data)
+            header = gen_vcf_header(fam_data)
+            f.write(header)
             for snp_list in chromo_chunked_snps:
                 if snp_list:
                     print("Outputing VCF lines for chromosome %s" % snp_list[0].chromosome)
@@ -595,15 +617,17 @@ def print_help():
 Population Factory generated simulated VCF files based on it's configuration. 
 
 Accepted Inputs are:
-    -s n       size of test group (afflicted/case group)
-    -c n       size of control group
-    -f 0.n     min minor allele frequency for a SNP to be included, default is 0.005
-    -p <path>  location of pathogens config yaml file (default is pathogens.yml)
-    -m 0.n     odds of a population member being male (default 0.5)
-    -x n       max number of snps to load/use
-    -l         load from refSNP datababse instead of using simulated snps
-    -n n       number of worker processes to use 
-    -z n       gzip compression level (1=least 9=most) default 6
+    -s n         size of test group (afflicted/case group)
+    -c n         size of control group
+    -f 0.n       min minor allele frequency for a SNP to be included, default is 0.005
+    -p <path>    location of pathogens config yaml file (default is pathogens.yml)
+    -m 0.n       odds of a population member being male (default 0.5)
+    -x n         max number of snps to load/use
+    -l           load from refSNP datababse instead of using simulated snps
+    -n n         number of worker processes to use 
+    -z n         gzip compression level (1=least 9=most) default 6
+    --pathogens  <path> to a pathogens.txt file that specifies the exact snps to use as pathogens
+    --offset n   starting offset for sample ids. Useful for creating VCF files that can be merged
     
     This app uses a single writer process and multiple worker processes that generate rows for the writer. 
     If disk is slow the writer can bottleneck with a high worker process count (-n option).
@@ -613,7 +637,7 @@ Accepted Inputs are:
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:z:l", ["help", "chromosomes:"])
+        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:z:l", ["help", "pathogens:", "offset:", "--snps:"])
     except getopt.GetoptError as err:
         print(err.msg)
         print_help()
@@ -624,8 +648,9 @@ def main(argv):
     pathogens_file = 'pathogens.yml'
     num_processes = 1
     generate_snps = True
-    chromosome_filter = None
     compression_level = 6
+    pathogens_list_path = None
+    starting_sample_offset = None
     for opt, arg in opts:
         if opt in ('-h', "-?", "--help"):
             print_help()
@@ -646,6 +671,10 @@ def main(argv):
             num_processes = int(arg)
         elif opt in "-l":
             generate_snps = False
+        elif opt in "pathogens":
+            pathogens_list_path = arg
+        elif opt in "offset":
+            starting_sample_offset = int(arg)
         elif opt in "-z":
             compression_level = int(arg)
             if (9 < compression_level) or compression_level < 1:
@@ -655,8 +684,12 @@ def main(argv):
     if not any("-z" in opt for opt in opts) and num_processes > 4:
         print("Using lower compression level due to number of worker threads.")
         compression_level = 2
-    pop_factory = PopulationFactory(num_processes, generate_snps=generate_snps)
-    pop_factory.generate_population(control_size, size, male_odds, pathogens_file, min_freq, max_snps, compression_level)
+    pop_factory = PopulationFactory(num_processes, generate_snps=generate_snps,
+                                    pathogens_list_path=pathogens_list_path,
+                                    sample_id_offset=starting_sample_offset,
+                                    male_odds=male_odds,
+                                    pathogens_config=pathogens_file)
+    pop_factory.generate_population(control_size, size, min_freq, max_snps, compression_level)
 
 
 if __name__ == '__main__':
