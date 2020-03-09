@@ -50,14 +50,15 @@ class PathogenGroupTest(unittest.TestCase):
 class PopulationFactoryTest(unittest.TestCase):
 
     def setUp(self):
-        self.snp_tuples = [test_snp_tuple(100), test_snp_tuple(101), test_snp_tuple(102), test_snp_tuple(103), test_snp_tuple(104)]
+        self.snp_tuples = [test_snp_tuple(100), test_snp_tuple(101), test_snp_tuple(102), test_snp_tuple(103),
+                           test_snp_tuple(104)]
 
     def test_pathogen_groups(self):
         groups = []
         for x in range(1, 3):
-            groups.append(pop_factory.PathogenGroup("group%i" % x, [0.5, 0.5], self.snp_tuples, 1))
+            groups.append(pop_factory.PathogenGroup.init_with_snps("group%i" % x, [0.5, 0.5], self.snp_tuples, 1))
         for x in range(3, 5):
-            groups.append(pop_factory.PathogenGroup("group%i" % x, [0.5, 0.5], self.snp_tuples, 10))
+            groups.append(pop_factory.PathogenGroup.init_with_snps("group%i" % x, [0.5, 0.5], self.snp_tuples, 10))
 
         selected_groups = pop_factory.PopulationFactory.pick_pathogen_groups(groups, 100)
         counts = {}
@@ -67,6 +68,35 @@ class PopulationFactoryTest(unittest.TestCase):
             counts[s.name] += 1
         self.assertGreater(counts["group3"], 2)
         self.assertLess(counts["group1"], 99)
+
+
+class ArgParserTest(unittest.TestCase):
+
+    def test_parse_args(self):
+        cmd = "-s 10 -c 20 -n 5 -z 3 -p path_config.yml -f 0.1 " \
+              + "-m 0.7 -x 2500 -l " \
+              + "--pathogens_file /home/ochrzan/workspace/pathogens.json " \
+              + "--offset 300 --snps_file my_snps.json --outdir myoutput/tuesday"
+        cmds = cmd.split(" ")
+        args = pop_factory.parse_cmd_args(cmds)
+        self.assertEqual(10, args.size)
+        self.assertEqual(20, args.control_size)
+        self.assertEqual(5, args.num_processes)
+        self.assertEqual(3, args.compression_level)
+        self.assertEqual("path_config.yml", args.pathogens_config)
+        self.assertEqual(0.1, args.min_freq)
+        self.assertEqual(0.7, args.male_odds)
+        self.assertEqual(2500, args.max_snps)
+        self.assertEqual(True, args.generate_snps)
+        self.assertEqual("/home/ochrzan/workspace/pathogens.json", args.pathogens_file)
+        self.assertEqual(300, args.offset)
+        self.assertEqual("my_snps.json", args.snps_file)
+        self.assertEqual("myoutput/tuesday", args.outdir)
+
+        cmd = "-s 10 -c 20 -x 2500"
+        cmds = cmd.split(" ")
+        args = pop_factory.parse_cmd_args(cmds)
+        self.assertIsNone(args.pathogens_file)
 
 
 if __name__ == '__main__':

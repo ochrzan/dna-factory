@@ -4,7 +4,7 @@ import numpy
 import common.timer as timer
 import gzip
 
-import pop_factory
+from Bio import bgzf
 from common.snp import RefSNP, Allele, obj_from_rowproxy
 from common.db import db
 from datetime import datetime
@@ -45,7 +45,7 @@ def gzip_speed():
 
     gzip_pipe = subprocess.Popen(args="gzip -c > tmp_file.gz", shell=True, stdin=subprocess.PIPE)
     randos = []
-    for i in range(100000):
+    for i in range(20000):
         rands = numpy.random.rand(300)
         string = " ".join(map(lambda x: str(x), rands))
         randos.append(string)
@@ -57,10 +57,13 @@ def gzip_speed():
         gzip_pipe.stdin.close()
         gzip_pipe.wait()
 
-    with timer.Timer(logger=print, name="GZipLib") as t, gzip.open("tmp2_file.gz", 'wt+', compresslevel=6) as f:
+    with timer.Timer(logger=print, name="GZipLib") as t, gzip.open("tmp2_file.gz", 'wt+', compresslevel=4) as f:
         for r in randos:
             f.write(r)
 
+    with timer.Timer(logger=print, name="BGZipLib") as t, bgzf.BgzfWriter("tmp3_file.gz", 'wt+', compresslevel=4) as f:
+        for r in randos:
+            f.write(r)
 
 
 if __name__ == '__main__':
