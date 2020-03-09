@@ -9,7 +9,10 @@ import json
 import random
 import sys
 import argparse
+import time
 from multiprocessing import Process, Queue
+import queue
+import heapq
 from Bio import bgzf
 import numpy
 import os
@@ -401,86 +404,104 @@ class PopulationFactory:
         chromo_chunked_snps = []
         cur_chromo = self.ordered_snps[0].chromosome
         cur_list = []
-        for snp in self.ordered_snps:
-            if snp.chromosome != cur_chromo:
-                chromo_chunked_snps.append(cur_list)
-                cur_list = []
-                cur_chromo = snp.chromosome
-            cur_list.append(snp)
-        chromo_chunked_snps.append(cur_list)
+
+        # for snp in self.ordered_snps:
+        #     if snp.chromosome != cur_chromo:
+        #         chromo_chunked_snps.append(cur_list)
+        #         cur_list = []
+        #         cur_chromo = snp.chromosome
+        #     cur_list.append(snp)
+        # chromo_chunked_snps.append(cur_list)
         with bgzf.BgzfWriter(filename=main_file, mode='wt+', compresslevel=compression_level) as f:
             header = gen_vcf_header(fam_data)
             f.write(header)
-            for snp_list in chromo_chunked_snps:
-                if snp_list:
-                    print("Outputing VCF lines for chromosome %s" % snp_list[0].chromosome)
-                self.write_vcf_snps(fam_data, snp_list, f)
+            print("Outputing VCF lines")
+            self.write_vcf_snps(fam_data, self.ordered_snps, f)
 
         print("Finished VCF file output.")
 
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file, header=False):
         processes = []
-        q = Queue(10000)
+        result_q = Queue(10000)
+        work_q = Queue()
         # TODO Try a Manager Queue and see if it improves speed
         # Create a process for each split group
         n_processes = self.num_processes
         if len(snps) < n_processes:
             # Small chunk of work so use 1 process
             n_processes = 1
-        snp_chunks = list(split_list(snps, n_processes))
+        start_index = 1
+        for item in list(enumerate(snps, start=start_index)):
+            work_q.put_nowait(item)
         # TODO put snps in work queue with index instead of chunks (or stripe chunks)
         for i in range(n_processes):
-            p = Process(target=self.queue_vcf_snps, args=(fam_data, snp_chunks[i], q))
+            p = Process(target=self.queue_vcf_snps, args=(fam_data, work_q, result_q))
             processes.append(p)
             p.start()
+        cur_snp = start_index
+        backlog = []
         while any(p.is_alive() for p in processes):
-            while not q.empty():
+            while not result_q.empty():
                 # TODO write in index order. If out of order, stick on min heap. when found,
                 #  flush min heap as far as possible
-                line = q.get()
-                file.write(line)
+                snp_tuple = result_q.get()
+                if snp_tuple[0] == cur_snp:
+                    file.write(snp_tuple[1])
+                    cur_snp += 1
+                    while backlog and cur_snp == backlog[0][0]:
+                        snp_tuple = heapq.heappop(backlog)
+                        file.write(snp_tuple[1])
+                        cur_snp += 1
+                else:
+                    heapq.heappush(backlog, snp_tuple)
+                if snp_tuple[0] % 5000 == 0:
+                    print("Output %i/%i VCF lines in file." % (snp_tuple[0]))
 
-    def queue_vcf_snps(self, fam_data, snps, q):
+    def queue_vcf_snps(self, fam_data, work_q, result_q):
 
         num_samples = len(fam_data)
-        for snp_num, snp in enumerate(snps, start=1):
-            sample_values = []
-            # Roll the dice for each sample and each allele.
-            randoms = numpy.random.rand(num_samples * 2)
-            for i, sample in enumerate(fam_data):
-                is_male = sample.is_male()
+        while True:
+            try:
+                snp_num, snp = work_q.get_nowait()
+                sample_values = []
+                # Roll the dice for each sample and each allele.
+                randoms = numpy.random.rand(num_samples * 2)
+                for i, sample in enumerate(fam_data):
+                    is_male = sample.is_male()
 
-                if not is_male and snp.chromosome == 'Y':
-                    # No Y chromosome for women
-                    sample_values.append(".")
-                if sample.is_control or snp.id not in sample.pathogen_snps:
-                    random_roll = randoms[i * 2]
-                    selected_nt = snp.pick_allele_index(random_roll)
-                    if is_haploid(snp.chromosome, is_male):
-                        sample_values.append(str(selected_nt))
-                        continue
+                    if not is_male and snp.chromosome == 'Y':
+                        # No Y chromosome for women
+                        sample_values.append(".")
+                    if sample.is_control or snp.id not in sample.pathogen_snps:
+                        random_roll = randoms[i * 2]
+                        selected_nt = snp.pick_allele_index(random_roll)
+                        if is_haploid(snp.chromosome, is_male):
+                            sample_values.append(str(selected_nt))
+                            continue
+                        else:
+                            random_roll = randoms[i * 2 + 1]
+                            other_nt = snp.pick_allele_index(random_roll)
+                        sample_values.append("%i/%i" % (selected_nt, other_nt))
                     else:
-                        random_roll = randoms[i * 2 + 1]
-                        other_nt = snp.pick_allele_index(random_roll)
-                    sample_values.append("%i/%i" % (selected_nt, other_nt))
-                else:
-                    if is_haploid(snp.chromosome, is_male):
-                        sample_values.append("1")
-                    else:
-                        sample_values.append("1/1")
-                    # TODO make it so pathogens can be recessive or dominant
-            # Output row - CHROM, POS, ID, REF, ALT, QUAL FILTER, INFO, FORMAT, (SAMPLE ID ...)
-            # 1      10583 rs58108140  G   A   25   PASS    .    GT     0/0     0/0     0/0
-            line = "%s\t%i\trs%s\t%s\t%s\t40\tPASS\t.\tGT\t" % (snp.chromosome,
-                                                                snp.position,
-                                                                snp.id,
-                                                                snp.ref_allele_tuple()[0],
-                                                                snp.alt_alleles()) + \
-                   "\t".join(sample_values) + "\n"
-            q.put(line)
-            if snp_num % 5000 == 0:
-                print("Output %i/%i VCF lines in file." % (snp_num, len(snps)))
+                        if is_haploid(snp.chromosome, is_male):
+                            sample_values.append("1")
+                        else:
+                            sample_values.append("1/1")
+                        # TODO make it so pathogens can be recessive or dominant
+                # Output row - CHROM, POS, ID, REF, ALT, QUAL FILTER, INFO, FORMAT, (SAMPLE ID ...)
+                # 1      10583 rs58108140  G   A   25   PASS    .    GT     0/0     0/0     0/0
+                line = "%s\t%i\trs%s\t%s\t%s\t40\tPASS\t.\tGT\t" % (snp.chromosome,
+                                                                    snp.position,
+                                                                    snp.id,
+                                                                    snp.ref_allele_tuple()[0],
+                                                                    snp.alt_alleles()) + \
+                       "\t".join(sample_values) + "\n"
+                result_q.put((snp_num, line))
+            except queue.Empty:
+                # pause to allow items being queued to complete being sent
+                time.sleep(1)
+                break
 
     def output_population(self, size, is_control, male_odds):
         """
@@ -557,7 +578,6 @@ class PopulationFactory:
             for line in f:
                 pg = PathogenGroup.from_json(line)
                 self.pathogens[pg.name] = pg
-
 
     def pick_pathogen_snps(self, snp_data, pathogens_config):
         """
