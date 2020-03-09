@@ -10,7 +10,7 @@ import random
 import sys
 import argparse
 import time
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Manager
 import queue
 import heapq
 from Bio import bgzf
@@ -23,7 +23,7 @@ from yaml import load
 from common.db import db
 from common.timer import Timer
 from common.snp import RefSNP, Allele, is_haploid, \
-    split_list, CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION
+    split_list, CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION, stripe_list
 from definitions import ROOT_DIR
 
 try:
@@ -210,7 +210,7 @@ class PopulationFactory:
                 self.population_dir += os.path.sep
         else:
             subdir = datetime.now().strftime("%Y%m%d%H%M")
-            self.population_dir = os.path.join(OUTPUT_DIR, subdir)
+            self.population_dir = os.path.join(OUTPUT_DIR, subdir) + os.path.sep
         self.male_odds = male_odds
         if num_processes > 0:
             self.num_processes = num_processes
@@ -249,8 +249,7 @@ class PopulationFactory:
         self.ordered_snps.sort(key=lambda x: (x.chromosome, x.position))
         if not self.snps_path:
             self.output_snps()
-        # gc.collect()
-        # TODO Read in pathogen groups if provided path
+        gc.collect()
         if self.pathogens_list_path:
             self.load_pathogens()
         else:
@@ -379,7 +378,8 @@ class PopulationFactory:
                              "\t".join(map(lambda x: "rs" + str(x), pathogen_snps.keys())) + "\n")
                 else:
                     pathogen_snps = None
-                sample = SampleInfo(i + 1, iid, 0, 0, sex_code, is_control, pathogen_snps)
+                sample = SampleInfo(i + 1 + self.sample_id_offset * 2,
+                                    iid, 0, 0, sex_code, is_control, pathogen_snps)
                 sample_data.append(sample)
                 f.write(sample.to_fam_format())
 
@@ -423,47 +423,47 @@ class PopulationFactory:
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file, header=False):
         processes = []
-        result_q = Queue(10000)
-        work_q = Queue()
-        # TODO Try a Manager Queue and see if it improves speed
+        # Queue is large since there is possible deadlock scenario if a worker thread gets behind by more than
+        # the queue size.
+        result_q = Queue(100000)
+
         # Create a process for each split group
         n_processes = self.num_processes
         if len(snps) < n_processes:
             # Small chunk of work so use 1 process
             n_processes = 1
         start_index = 1
-        for item in list(enumerate(snps, start=start_index)):
-            work_q.put_nowait(item)
-        # TODO put snps in work queue with index instead of chunks (or stripe chunks)
+        work_chunks = stripe_list(list(enumerate(snps, start=start_index)), n_processes)
+
         for i in range(n_processes):
-            p = Process(target=self.queue_vcf_snps, args=(fam_data, work_q, result_q))
+            p = Process(target=self.queue_vcf_snps, args=(fam_data, work_chunks[i], result_q))
             processes.append(p)
             p.start()
         cur_snp = start_index
         backlog = []
         while any(p.is_alive() for p in processes):
             while not result_q.empty():
-                # TODO write in index order. If out of order, stick on min heap. when found,
-                #  flush min heap as far as possible
                 snp_tuple = result_q.get()
                 if snp_tuple[0] == cur_snp:
                     file.write(snp_tuple[1])
                     cur_snp += 1
                     while backlog and cur_snp == backlog[0][0]:
-                        snp_tuple = heapq.heappop(backlog)
-                        file.write(snp_tuple[1])
+                        # Next item is on the min-heap
+                        heap_tuple = heapq.heappop(backlog)
+                        file.write(heap_tuple[1])
                         cur_snp += 1
                 else:
                     heapq.heappush(backlog, snp_tuple)
                 if snp_tuple[0] % 5000 == 0:
-                    print("Output %i/%i VCF lines in file." % (snp_tuple[0]))
+                    print("Output %i/%i VCF lines in file." % (snp_tuple[0], len(snps)))
 
     def queue_vcf_snps(self, fam_data, work_q, result_q):
 
         num_samples = len(fam_data)
-        while True:
+        for snp_num, snp in work_q:
             try:
-                snp_num, snp = work_q.get_nowait()
+                #snp_num, snp = work_q.get_nowait()
+
                 sample_values = []
                 # Roll the dice for each sample and each allele.
                 randoms = numpy.random.rand(num_samples * 2)
@@ -500,6 +500,7 @@ class PopulationFactory:
                 result_q.put((snp_num, line))
             except queue.Empty:
                 # pause to allow items being queued to complete being sent
+                print("Work Queue empty.")
                 time.sleep(1)
                 break
 
@@ -760,7 +761,8 @@ def main(sys_args):
 
     if not args.generate_snps:
         db.default_init()
-    pop_factory = PopulationFactory(args.num_processes, generate_snps=args.generate_snps,
+    pop_factory = PopulationFactory(num_processes=args.num_processes,
+                                    generate_snps=args.generate_snps,
                                     pathogens_list_path=args.pathogens_file,
                                     sample_id_offset=args.offset,
                                     male_odds=args.male_odds,
