@@ -8,17 +8,22 @@ import getopt
 import json
 import random
 import sys
-from multiprocessing import Process, Queue
-from common.snp import RefSNP, Allele, is_haploid, \
-    split_list, CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION
-
+import argparse
+import time
+from multiprocessing import Process, Queue, Manager
+import queue
+import heapq
+from Bio import bgzf
 import numpy
 import os
 from datetime import datetime
 import gzip
 from yaml import load
+
 from common.db import db
 from common.timer import Timer
+from common.snp import RefSNP, Allele, is_haploid, \
+    split_list, CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION, stripe_list
 from definitions import ROOT_DIR
 
 try:
@@ -126,7 +131,7 @@ class SNPTuples:
         ref_obj = json.loads(json_line)
         snp_tuples = cls(ref_obj['id'], ref_obj["chromosome"], ref_obj["position"])
         if "tuples" in ref_obj:
-            for i, f in ref_obj['tuples']:
+            for i, f in ref_obj['tuples'].items():
                 snp_tuples.add_tuple(i, f)
         return snp_tuples
 
@@ -195,11 +200,17 @@ class PopulationFactory:
 
     # number of subgroups with phenotype, total number of hidden mutations
     def __init__(self, num_processes=1, generate_snps=False, male_odds=0.5, pathogens_config=None,
-                 pathogens_list_path=None, sample_id_offset=0):
+                 pathogens_list_path=None, sample_id_offset=0, snps_path=None, output_path=None):
         self.pathogens = {}
         self.ordered_snps = []
         self.snp_count = 0
-        self.population_dir = OUTPUT_DIR
+        if output_path:
+            self.population_dir = output_path
+            if not self.population_dir.endswith(os.path.sep):
+                self.population_dir += os.path.sep
+        else:
+            subdir = datetime.now().strftime("%Y%m%d%H%M")
+            self.population_dir = os.path.join(OUTPUT_DIR, subdir) + os.path.sep
         self.male_odds = male_odds
         if num_processes > 0:
             self.num_processes = num_processes
@@ -207,8 +218,12 @@ class PopulationFactory:
             self.num_processes = 1
         self.generate_snps = generate_snps
         self.pathogens_config = pathogens_config
-        self.sample_id_offset = sample_id_offset
+        if sample_id_offset:
+            self.sample_id_offset = sample_id_offset
+        else:
+            self.sample_id_offset = 0
         self.pathogens_list_path = pathogens_list_path
+        self.snps_path = snps_path
 
     @Timer(logger=print, text="Finished Generating Population in {:0.4f} secs.")
     def generate_population(self, control_size, test_size, min_freq, max_snps,
@@ -220,23 +235,27 @@ class PopulationFactory:
         3. Generate test data based on hidden pathogens and random otherwise
         Use numpy to generate random number en mass
         """
-        subdir = datetime.now().strftime("%Y%m%d%H%M")
         numpy.random.seed(int(datetime.now().strftime("%H%M%S")))
-        self.population_dir = OUTPUT_DIR + "/" + subdir + "/"
         os.makedirs(self.population_dir, exist_ok=True)
-        # TODO Read in snps if provided path to snps file
-        if self.generate_snps:
-            snp_factory = SnpFactory.init_from_cdf_file()
-            self.ordered_snps = snp_factory.random_snp_tuples(max_snps)
+        # TODO Test Read in snps if provided path to snps file
+        if self.snps_path:
+            self.load_snps_file()
         else:
-            self.load_snps_db(min_freq, max_snps)
-        self.ordered_snps.sort(key=lambda x: x.chromosome)
+            if self.generate_snps:
+                snp_factory = SnpFactory.init_from_cdf_file()
+                self.ordered_snps = snp_factory.random_snp_tuples(max_snps)
+            else:
+                self.load_snps_db(min_freq, max_snps)
+        self.ordered_snps.sort(key=lambda x: (x.chromosome, x.position))
+        if not self.snps_path:
+            self.output_snps()
         gc.collect()
-        # TODO Read in pathogen groups if provided path
-        self.pick_pathogen_snps(self.ordered_snps, self.pathogens_config)
-        self.output_snps()
+        if self.pathogens_list_path:
+            self.load_pathogens()
+        else:
+            self.pick_pathogen_snps(self.ordered_snps, self.pathogens_config)
+
         # Create control population
-        # TODO Pass through sample offset
         self.output_vcf_population(control_size, test_size, self.male_odds, compression_level)
         return
 
@@ -245,6 +264,16 @@ class PopulationFactory:
         with gzip.open(self.population_dir + "snps.json.gz", 'wt', compresslevel=5) as f:
             for t in self.ordered_snps:
                 f.write(str(t) + "\n")
+
+    def load_snps_file(self):
+        """
+        Load SNPTuples from a saved json file.
+        :return:
+        """
+        with gzip.open(self.snps_path, 'rt') as f:
+            for line in f:
+                self.snp_count += 1
+                self.ordered_snps.append(SNPTuples.from_json(line))
 
     def load_snps_db(self, min_freq, max_snps):
         """
@@ -318,10 +347,11 @@ class PopulationFactory:
         :param control_size:
         :param test_size:
         :param male_odds:
+        :param pathogen_group_list:
         :return: Data for each sample
         """
-        control_id = 100000
-        test_id = 500000
+        control_id = 100000 + self.sample_id_offset
+        test_id = 500000 + self.sample_id_offset
         randoms = numpy.random.rand(control_size + test_size)
         sample_data = []
         with open(self.population_dir + "population.fam", 'w') as f, \
@@ -348,7 +378,8 @@ class PopulationFactory:
                              "\t".join(map(lambda x: "rs" + str(x), pathogen_snps.keys())) + "\n")
                 else:
                     pathogen_snps = None
-                sample = SampleInfo(i + 1, iid, 0, 0, sex_code, is_control, pathogen_snps)
+                sample = SampleInfo(i + 1 + self.sample_id_offset * 2,
+                                    iid, 0, 0, sex_code, is_control, pathogen_snps)
                 sample_data.append(sample)
                 f.write(sample.to_fam_format())
 
@@ -373,82 +404,105 @@ class PopulationFactory:
         chromo_chunked_snps = []
         cur_chromo = self.ordered_snps[0].chromosome
         cur_list = []
-        for snp in self.ordered_snps:
-            if snp.chromosome != cur_chromo:
-                chromo_chunked_snps.append(cur_list)
-                cur_list = []
-                cur_chromo = snp.chromosome
-            cur_list.append(snp)
-        chromo_chunked_snps.append(cur_list)
-        with gzip.open(main_file, 'wt+', compresslevel=compression_level) as f:
+
+        # for snp in self.ordered_snps:
+        #     if snp.chromosome != cur_chromo:
+        #         chromo_chunked_snps.append(cur_list)
+        #         cur_list = []
+        #         cur_chromo = snp.chromosome
+        #     cur_list.append(snp)
+        # chromo_chunked_snps.append(cur_list)
+        with bgzf.BgzfWriter(filename=main_file, mode='wt+', compresslevel=compression_level) as f:
             header = gen_vcf_header(fam_data)
             f.write(header)
-            for snp_list in chromo_chunked_snps:
-                if snp_list:
-                    print("Outputing VCF lines for chromosome %s" % snp_list[0].chromosome)
-                self.write_vcf_snps(fam_data, snp_list, f)
+            print("Outputing VCF lines")
+            self.write_vcf_snps(fam_data, self.ordered_snps, f)
 
         print("Finished VCF file output.")
 
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file, header=False):
         processes = []
-        q = Queue(10000)
+        # Queue is large since there is possible deadlock scenario if a worker thread gets behind by more than
+        # the queue size.
+        result_q = Queue(100000)
+
         # Create a process for each split group
         n_processes = self.num_processes
         if len(snps) < n_processes:
             # Small chunk of work so use 1 process
             n_processes = 1
-        snp_chunks = list(split_list(snps, n_processes))
+        start_index = 1
+        work_chunks = stripe_list(list(enumerate(snps, start=start_index)), n_processes)
+
         for i in range(n_processes):
-            p = Process(target=self.queue_vcf_snps, args=(fam_data, snp_chunks[i], q))
+            p = Process(target=self.queue_vcf_snps, args=(fam_data, work_chunks[i], result_q))
             processes.append(p)
             p.start()
+        cur_snp = start_index
+        backlog = []
         while any(p.is_alive() for p in processes):
-            while not q.empty():
-                line = q.get()
-                file.write(line)
+            while not result_q.empty():
+                snp_tuple = result_q.get()
+                if snp_tuple[0] == cur_snp:
+                    file.write(snp_tuple[1])
+                    cur_snp += 1
+                    while backlog and cur_snp == backlog[0][0]:
+                        # Next item is on the min-heap
+                        heap_tuple = heapq.heappop(backlog)
+                        file.write(heap_tuple[1])
+                        cur_snp += 1
+                else:
+                    heapq.heappush(backlog, snp_tuple)
+                if snp_tuple[0] % 5000 == 0:
+                    print("Output %i/%i VCF lines in file." % (snp_tuple[0], len(snps)))
 
-    def queue_vcf_snps(self, fam_data, snps, q):
+    def queue_vcf_snps(self, fam_data, work_q, result_q):
 
         num_samples = len(fam_data)
-        for snp_num, snp in enumerate(snps, start=1):
-            sample_values = []
-            # Roll the dice for each sample and each allele.
-            randoms = numpy.random.rand(num_samples * 2)
-            for i, sample in enumerate(fam_data):
-                is_male = sample.is_male()
+        for snp_num, snp in work_q:
+            try:
+                #snp_num, snp = work_q.get_nowait()
 
-                if not is_male and snp.chromosome == 'Y':
-                    # No Y chromosome for women
-                    sample_values.append(".")
-                if sample.is_control or snp.id not in sample.pathogen_snps:
-                    random_roll = randoms[i * 2]
-                    selected_nt = snp.pick_allele_index(random_roll)
-                    if is_haploid(snp.chromosome, is_male):
-                        sample_values.append(str(selected_nt))
-                        continue
+                sample_values = []
+                # Roll the dice for each sample and each allele.
+                randoms = numpy.random.rand(num_samples * 2)
+                for i, sample in enumerate(fam_data):
+                    is_male = sample.is_male()
+
+                    if not is_male and snp.chromosome == 'Y':
+                        # No Y chromosome for women
+                        sample_values.append(".")
+                    if sample.is_control or snp.id not in sample.pathogen_snps:
+                        random_roll = randoms[i * 2]
+                        selected_nt = snp.pick_allele_index(random_roll)
+                        if is_haploid(snp.chromosome, is_male):
+                            sample_values.append(str(selected_nt))
+                            continue
+                        else:
+                            random_roll = randoms[i * 2 + 1]
+                            other_nt = snp.pick_allele_index(random_roll)
+                        sample_values.append("%i/%i" % (selected_nt, other_nt))
                     else:
-                        random_roll = randoms[i * 2 + 1]
-                        other_nt = snp.pick_allele_index(random_roll)
-                    sample_values.append("%i/%i" % (selected_nt, other_nt))
-                else:
-                    if is_haploid(snp.chromosome, is_male):
-                        sample_values.append("1")
-                    else:
-                        sample_values.append("1/1")
-                    # TODO make it so pathogens can be recessive or dominant
-            # Output row - CHROM, POS, ID, REF, ALT, QUAL FILTER, INFO, FORMAT, (SAMPLE ID ...)
-            # 1      10583 rs58108140  G   A   25   PASS    .    GT     0/0     0/0     0/0
-            line = "%s\t%i\trs%s\t%s\t%s\t40\tPASS\t.\tGT\t" % (snp.chromosome,
-                                                                snp.position,
-                                                                snp.id,
-                                                                snp.ref_allele_tuple()[0],
-                                                                snp.alt_alleles()) + \
-                   "\t".join(sample_values) + "\n"
-            q.put(line)
-            if snp_num % 5000 == 0:
-                print("Output %i/%i VCF lines in file." % (snp_num, len(snps)))
+                        if is_haploid(snp.chromosome, is_male):
+                            sample_values.append("1")
+                        else:
+                            sample_values.append("1/1")
+                        # TODO make it so pathogens can be recessive or dominant
+                # Output row - CHROM, POS, ID, REF, ALT, QUAL FILTER, INFO, FORMAT, (SAMPLE ID ...)
+                # 1      10583 rs58108140  G   A   25   PASS    .    GT     0/0     0/0     0/0
+                line = "%s\t%i\trs%s\t%s\t%s\t40\tPASS\t.\tGT\t" % (snp.chromosome,
+                                                                    snp.position,
+                                                                    snp.id,
+                                                                    snp.ref_allele_tuple()[0],
+                                                                    snp.alt_alleles()) + \
+                       "\t".join(sample_values) + "\n"
+                result_q.put((snp_num, line))
+            except queue.Empty:
+                # pause to allow items being queued to complete being sent
+                print("Work Queue empty.")
+                time.sleep(1)
+                break
 
     def output_population(self, size, is_control, male_odds):
         """
@@ -520,9 +574,15 @@ class PopulationFactory:
                         group_name = "Control"
                     print("Output %i memebers of the %s group." % (i, group_name))
 
+    def load_pathogens(self):
+        with open(self.pathogens_list_path, 'rt') as f:
+            for line in f:
+                pg = PathogenGroup.from_json(line)
+                self.pathogens[pg.name] = pg
+
     def pick_pathogen_snps(self, snp_data, pathogens_config):
         """
-        Pick and store the snps that are the pathogens. Randomly? pick num_mutations from the snps
+        Pick and store the snps that are the pathogens based on pathogens_config.
         :param pathogens_config: file path for pathogens yaml file
         :param snp_data: SNPTuples which are candidates for being a pathogen
         :return: nothing... self.pathogens is populated
@@ -537,27 +597,33 @@ class PopulationFactory:
                 for i in range(0, iterations):
                     path_group = PathogenGroup.from_yml(group_attr, snp_data, "%s-%s" % (group, i))
                     self.pathogens[path_group.name] = path_group
-        with open(self.population_dir + "pathogens.txt", 'w') as f:
-            for group_name, pathogen_group in self.pathogens.items():
-                f.write(str(group_name) + ":\n")
-                for snp_id, weight in pathogen_group.pathogens.items():
-                    f.write("rs%s\t%s\n" % (snp_id, weight))
+        with open(self.population_dir + "pathogens.json", 'w') as f:
+            for pathogen_group in self.pathogens.values():
+                f.write(pathogen_group.to_json() + "\n")
 
 
 class PathogenGroup:
 
-    def __init__(self, name, mutation_weights, snp_data, population_weight,
-                 min_minor_allele_freq=0, max_minor_allele_freq=1.1):
+    def __init__(self, name, population_weight):
+
+        self.pathogens = {}
+        self.name = name
+        self.population_weight = population_weight
+
+    @classmethod
+    def init_with_snps(cls, name, mutation_weights, snp_data, population_weight,
+                       min_minor_allele_freq=0, max_minor_allele_freq=1.1):
         """
         Inits the pathogen dictionary to be random alleles matching the freq filters. pathogens dict
         stores snp.id => mutation weight mapping.
         :param mutation_weights: list of floats of the value each picked
         :param snp_data: snp dictionary
         :param population_weight: the weight this pathogen group has (shares in test population)
+        :param name: name of this group
+        :param min_minor_allele_freq: Filter for picking snps. Min MAF of SNP to be in pathogen group
+        :param max_minor_allele_freq: Filter for picking snps. Max MAF of SNP to be in pathogen group
         """
-        self.pathogens = {}
-        self.name = name
-        self.population_weight = population_weight
+        pathogen_grp = cls(name, population_weight)
 
         filter_snps = min_minor_allele_freq > 0 or max_minor_allele_freq < 0.5
         filtered_list = snp_data
@@ -572,8 +638,9 @@ class PathogenGroup:
                             (min_minor_allele_freq, max_minor_allele_freq))
         i = 0
         for snp_id in numpy.random.choice(a=snp_id_list, size=len(mutation_weights), replace=False):
-            self.pathogens[snp_id] = mutation_weights[i]
+            pathogen_grp.pathogens[int(snp_id)] = mutation_weights[i]
             i += 1
+        return pathogen_grp
 
     @classmethod
     def from_yml(cls, yml_attr, snp_data, name):
@@ -592,8 +659,23 @@ class PathogenGroup:
                 raise Exception('max_minor_allele_freq must be between 0 and 0.5. yml value = {}'.format(
                     yml_attr['max_minor_allele_freq']))
 
-        return cls(name, yml_attr['mutation_weights'], snp_data, yml_attr['population_weight'],
-                   min_minor_allele_freq, max_minor_allele_freq)
+        return cls.init_with_snps(name,
+                                  yml_attr['mutation_weights'],
+                                  snp_data,
+                                  yml_attr['population_weight'],
+                                  min_minor_allele_freq,
+                                  max_minor_allele_freq)
+
+    def to_json(self):
+        return json.dumps(vars(self))
+
+    @classmethod
+    def from_json(cls, json_line):
+        pg = json.loads(json_line)
+        pathogen_group = cls(pg['name'], pg['population_weight'])
+        for snp, weight in pg['pathogens'].items():
+            pathogen_group.pathogens[snp] = weight
+        return pathogen_group
 
     def select_mutations(self):
         """
@@ -614,7 +696,7 @@ class PathogenGroup:
 
 def print_help():
     print("""
-Population Factory generated simulated VCF files based on it's configuration. 
+Population Factory generates test VCF files based on it's configuration. 
 
 Accepted Inputs are:
     -s n         size of test group (afflicted/case group)
@@ -628,6 +710,8 @@ Accepted Inputs are:
     -z n         gzip compression level (1=least 9=most) default 6
     --pathogens  <path> to a pathogens.txt file that specifies the exact snps to use as pathogens
     --offset n   starting offset for sample ids. Useful for creating VCF files that can be merged
+    --outdir     <path> directory to use for output files
+    --snps   <path> location of snps file to use as selected snps
     
     This app uses a single writer process and multiple worker processes that generate rows for the writer. 
     If disk is slow the writer can bottleneck with a high worker process count (-n option).
@@ -635,61 +719,58 @@ Accepted Inputs are:
     """)
 
 
-def main(argv):
-    try:
-        opts, args = getopt.getopt(argv, "h?p:f:s:c:x:n:z:l", ["help", "pathogens:", "offset:", "--snps:"])
-    except getopt.GetoptError as err:
-        print(err.msg)
-        print_help()
-        sys.exit(2)
-    min_freq = MIN_SNP_FREQ
-    male_odds = 0.5
-    max_snps = 10000000
-    pathogens_file = 'pathogens.yml'
-    num_processes = 1
-    generate_snps = True
-    compression_level = 6
-    pathogens_list_path = None
-    starting_sample_offset = None
-    for opt, arg in opts:
-        if opt in ('-h', "-?", "--help"):
-            print_help()
-            sys.exit()
-        elif opt in "-p":
-            pathogens_file = arg
-        elif opt in "-s":
-            size = int(arg)
-        elif opt in "-c":
-            control_size = int(arg)
-        elif opt in "-f":
-            min_freq = float(arg)
-        elif opt in "-m":
-            male_odds = float(arg)
-        elif opt in "-x":
-            max_snps = int(arg)
-        elif opt in "-n":
-            num_processes = int(arg)
-        elif opt in "-l":
-            generate_snps = False
-        elif opt in "pathogens":
-            pathogens_list_path = arg
-        elif opt in "offset":
-            starting_sample_offset = int(arg)
-        elif opt in "-z":
-            compression_level = int(arg)
-            if (9 < compression_level) or compression_level < 1:
-                raise Exception("Compression level must be between 1 (least) and 9 (most)")
-    if not generate_snps:
+def parse_cmd_args(args):
+    arg_parser = argparse.ArgumentParser(fromfile_prefix_chars='@',
+                                         prog='Population Factory',
+                                         description='Generates genetic populations using simulated SNP data.')
+
+    arg_parser.add_argument('-s', type=int, dest='size', help='size of afflicted/case group', required=True)
+    arg_parser.add_argument('-c', type=int, dest='control_size', help='size of control group', required=True)
+    arg_parser.add_argument('-x', type=int, dest='max_snps', help='max number of snps to load/generate')
+    arg_parser.add_argument('-p', type=str, default='pathogens.yml',
+                            help='location of pathogens config yaml file (default is pathogens.yml)',
+                            dest='pathogens_config')
+    arg_parser.add_argument('-f', type=float, default=0.005, dest='min_freq',
+                            help='min minor allele frequency for a SNP to be included, default is 0.005')
+
+    arg_parser.add_argument("-m", type=float, default=0.5, dest='male_odds',
+                            help='odds of a population member being male (default 0.5)')
+    arg_parser.add_argument('-n', type=int, default=2, dest='num_processes',
+                            help='Number of worker processes to use')
+    arg_parser.add_argument('-z', type=int, dest='compression_level', default=6,
+                            help='gzip compression level (1=least 9=most) default 6',
+                            choices=range(1, 10))
+    arg_parser.add_argument('-l', action='store_const', const=False, default=True, dest='generate_snps',
+                            help='load from refSNP datababse instead of using '
+                                 + 'simulated snps (connection config in db.yml)')
+    arg_parser.add_argument('--pathogens_file', type=str,
+                            help='<path> to a pathogens.json file that specifies the exact snps to use as pathogens')
+    arg_parser.add_argument('--snps_file', type=str,
+                            help='<path> location of snps.json.gz file to use as selected snps')
+    arg_parser.add_argument('--outdir', type=str,
+                            help='<path> directory to use for output files')
+    arg_parser.add_argument('--offset', type=int,
+                            help='offset to add to all sample ids. Useful for creating VCF files that can be merged')
+    return arg_parser.parse_args(args)
+
+
+def main(sys_args):
+    args = parse_cmd_args(sys_args)
+    if args.num_processes > 4 and args.compression_level > 5:
+        print("Recommend using a compression level of 3 (-z 3) or lower with 5 or more worker threads.")
+
+    if not args.generate_snps:
         db.default_init()
-    if not any("-z" in opt for opt in opts) and num_processes > 4:
-        print("Using lower compression level due to number of worker threads.")
-        compression_level = 2
-    pop_factory = PopulationFactory(num_processes, generate_snps=generate_snps,
-                                    pathogens_list_path=pathogens_list_path,
-                                    sample_id_offset=starting_sample_offset,
-                                    male_odds=male_odds,
-                                    pathogens_config=pathogens_file)
-    pop_factory.generate_population(control_size, size, min_freq, max_snps, compression_level)
+    pop_factory = PopulationFactory(num_processes=args.num_processes,
+                                    generate_snps=args.generate_snps,
+                                    pathogens_list_path=args.pathogens_file,
+                                    sample_id_offset=args.offset,
+                                    male_odds=args.male_odds,
+                                    pathogens_config=args.pathogens_config,
+                                    snps_path=args.snps_file,
+                                    output_path=args.outdir)
+    pop_factory.generate_population(args.control_size, args.size, args.min_freq,
+                                    args.max_snps, args.compression_level)
 
 
 if __name__ == '__main__':

@@ -79,6 +79,14 @@ def split_list(l, n):
         yield l[start:end]
 
 
+def stripe_list(l, num_stripes):
+    stripes = []
+    for i in range(num_stripes):
+        stripes.append([])
+    for n, i in enumerate(l):
+        stripes[n % num_stripes].append(i)
+    return stripes
+
 def obj_from_rowproxy(cls, row_proxy):
     o = cls.__new__(cls)
     for k, v in row_proxy.items():
