@@ -401,17 +401,7 @@ class PopulationFactory:
 
         fam_data = self.generate_fam_file(control_size, test_size, male_odds, pathogen_group_list)
         main_file = self.population_dir + "population.vcf.gz"
-        chromo_chunked_snps = []
-        cur_chromo = self.ordered_snps[0].chromosome
-        cur_list = []
 
-        # for snp in self.ordered_snps:
-        #     if snp.chromosome != cur_chromo:
-        #         chromo_chunked_snps.append(cur_list)
-        #         cur_list = []
-        #         cur_chromo = snp.chromosome
-        #     cur_list.append(snp)
-        # chromo_chunked_snps.append(cur_list)
         with bgzf.BgzfWriter(filename=main_file, mode='wt+', compresslevel=compression_level) as f:
             header = gen_vcf_header(fam_data)
             f.write(header)
