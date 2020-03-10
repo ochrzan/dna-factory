@@ -45,9 +45,9 @@ class DbLayer:
         db_yaml_file = os.path.join(ROOT_DIR, "db.yml")
         if os.path.exists(db_yaml_file):
             with open(db_yaml_file, 'r') as p:
-                pathogen_yml = load(p, Loader=Loader)
-                if pathogen_yml.get("connection_string"):
-                    connect_string = pathogen_yml["connection_sring"]
+                db_yml = load(p, Loader=Loader)
+                if db_yml.get("connection_string"):
+                    connect_string = db_yml["connection_sring"]
         self.db_init(connect_string)
 
     def bulk_insert(self, objs, table):

@@ -46,10 +46,10 @@ def gen_vcf_header(fam_data):
 
 class SampleInfo:
     """
-    Class for individual sample metadata for use in a .fam file. Also holds pathogen data for this individual
+    Class for individual sample metadata for use in a .fam file. Also holds deleterious data for this individual
     """
 
-    def __init__(self, family_id, person_id, father_id, mother_id, sex: int, is_control: bool, pathogen_snps: dict):
+    def __init__(self, family_id, person_id, father_id, mother_id, sex: int, is_control: bool, deleterious_snps: dict):
         assert person_id
         self.person_id = person_id
         self.family_id = family_id
@@ -57,7 +57,7 @@ class SampleInfo:
         self.mother_id = mother_id
         self.sex = sex
         self.is_control = is_control
-        self.pathogen_snps = pathogen_snps
+        self.deleterious_snps = deleterious_snps
 
     def to_fam_format(self):
         if self.is_control:
@@ -196,9 +196,9 @@ class SnpFactory:
 class PopulationFactory:
 
     # number of subgroups with phenotype, total number of hidden mutations
-    def __init__(self, num_processes=1, generate_snps=False, male_odds=0.5, pathogens_config=None,
-                 pathogens_list_path=None, sample_id_offset=0, snps_path=None, output_path=None):
-        self.pathogens = {}
+    def __init__(self, num_processes=1, generate_snps=False, male_odds=0.5, deleterious_config=None,
+                 deleterious_list_path=None, sample_id_offset=0, snps_path=None, output_path=None):
+        self.deleterious = {}
         self.ordered_snps = []
         self.snp_count = 0
         if output_path:
@@ -214,12 +214,12 @@ class PopulationFactory:
         else:
             self.num_processes = 1
         self.generate_snps = generate_snps
-        self.pathogens_config = pathogens_config
+        self.deleterious_config = deleterious_config
         if sample_id_offset:
             self.sample_id_offset = sample_id_offset
         else:
             self.sample_id_offset = 0
-        self.pathogens_list_path = pathogens_list_path
+        self.deleterious_list_path = deleterious_list_path
         self.snps_path = snps_path
 
     @Timer(logger=print, text="Finished Generating Population in {:0.4f} secs.")
@@ -227,14 +227,13 @@ class PopulationFactory:
                             compression_level=6):
         """Generate a simulated population based on the number of groups, mutations, size of test group,
         size of control group and the snp dictionary.
-        1. Determine which snps will be the hidden pathogenic snps
+        1. Determine which snps will be the hidden deleterious snps
         2. Generate control data using random generated population
-        3. Generate test data based on hidden pathogens and random otherwise
-        Use numpy to generate random number en mass
+        3. Generate test data based on hidden deleterious and random otherwise
+        Uses numpy to generate random numbers en mass
         """
         numpy.random.seed(int(datetime.now().strftime("%H%M%S")))
         os.makedirs(self.population_dir, exist_ok=True)
-        # TODO Test Read in snps if provided path to snps file
         if self.snps_path:
             self.load_snps_file()
         else:
@@ -247,10 +246,10 @@ class PopulationFactory:
         if not self.snps_path:
             self.output_snps()
         gc.collect()
-        if self.pathogens_list_path:
-            self.load_pathogens()
+        if self.deleterious_list_path:
+            self.load_deleterious()
         else:
-            self.pick_pathogen_snps(self.ordered_snps, self.pathogens_config)
+            self.pick_deleterious_snps(self.ordered_snps, self.deleterious_config)
 
         # Create control population
         self.output_vcf_population(control_size, test_size, self.male_odds, compression_level)
@@ -331,20 +330,20 @@ class PopulationFactory:
         self.ordered_snps.append(snp_tuple)
 
     @classmethod
-    def pick_pathogen_groups(cls, pathogen_groups, pop_size):
+    def pick_deleterious_groups(cls, deleterious_groups, pop_size):
         return random.choices(
-            population=list(pathogen_groups),
-            weights=list(map(lambda x: x.population_weight, pathogen_groups)),
+            population=list(deleterious_groups),
+            weights=list(map(lambda x: x.population_weight, deleterious_groups)),
             k=pop_size
         )
 
-    def generate_fam_file(self, control_size, test_size, male_odds, pathogen_group_list):
+    def generate_fam_file(self, control_size, test_size, male_odds, deleterious_group_list):
         """
 
         :param control_size:
         :param test_size:
         :param male_odds:
-        :param pathogen_group_list:
+        :param deleterious_group_list:
         :return: Data for each sample
         """
         control_id = 100000 + self.sample_id_offset
@@ -352,7 +351,7 @@ class PopulationFactory:
         randoms = numpy.random.rand(control_size + test_size)
         sample_data = []
         with open(self.population_dir + "population.fam", 'w') as f, \
-                open(self.population_dir + "pop_pathogens.txt", "w") as pp:
+                open(self.population_dir + "pop_deleterious.txt", "w") as pp:
             j = 0
             for i in range(control_size + test_size):
                 is_control = i < control_size
@@ -368,15 +367,15 @@ class PopulationFactory:
                     sex_code = 2
 
                 if not is_control:
-                    pathogen_group = pathogen_group_list[j]
+                    deleterious_group = deleterious_group_list[j]
                     j += 1
-                    pathogen_snps = pathogen_group.select_mutations()
-                    pp.write("%i\t%s\t" % (test_id, pathogen_group.name) +
-                             "\t".join(map(lambda x: "rs" + str(x), pathogen_snps.keys())) + "\n")
+                    deleterious_snps = deleterious_group.select_mutations()
+                    pp.write("%i\t%s\t" % (test_id, deleterious_group.name) +
+                             "\t".join(map(lambda x: "rs" + str(x), deleterious_snps.keys())) + "\n")
                 else:
-                    pathogen_snps = None
+                    deleterious_snps = None
                 sample = SampleInfo(i + 1 + self.sample_id_offset * 2,
-                                    iid, 0, 0, sex_code, is_control, pathogen_snps)
+                                    iid, 0, 0, sex_code, is_control, deleterious_snps)
                 sample_data.append(sample)
                 f.write(sample.to_fam_format())
 
@@ -393,10 +392,10 @@ class PopulationFactory:
 
         if not self.ordered_snps:
             raise Exception("No SNPs to Process! Exiting.")
-        # pick pathogen groups for population size
-        pathogen_group_list = PopulationFactory.pick_pathogen_groups(list(self.pathogens.values()), test_size)
+        # pick deleterious groups for population size
+        deleterious_group_list = PopulationFactory.pick_deleterious_groups(list(self.deleterious.values()), test_size)
 
-        fam_data = self.generate_fam_file(control_size, test_size, male_odds, pathogen_group_list)
+        fam_data = self.generate_fam_file(control_size, test_size, male_odds, deleterious_group_list)
         main_file = self.population_dir + "population.vcf.gz"
 
         with bgzf.BgzfWriter(filename=main_file, mode='wt+', compresslevel=compression_level) as f:
@@ -460,7 +459,7 @@ class PopulationFactory:
                     if not is_male and snp.chromosome == 'Y':
                         # No Y chromosome for women
                         sample_values.append(".")
-                    if sample.is_control or snp.id not in sample.pathogen_snps:
+                    if sample.is_control or snp.id not in sample.deleterious_snps:
                         random_roll = randoms[i * 2]
                         selected_nt = snp.pick_allele_index(random_roll)
                         if is_haploid(snp.chromosome, is_male):
@@ -475,7 +474,7 @@ class PopulationFactory:
                             sample_values.append("1")
                         else:
                             sample_values.append("1/1")
-                        # TODO make it so pathogens can be recessive or dominant
+                        # TODO make it so deleterious mutations can be recessive or dominant
                 # Output row - CHROM, POS, ID, REF, ALT, QUAL FILTER, INFO, FORMAT, (SAMPLE ID ...)
                 # 1      10583 rs58108140  G   A   25   PASS    .    GT     0/0     0/0     0/0
                 line = "%s\t%i\trs%s\t%s\t%s\t40\tPASS\t.\tGT\t" % (snp.chromosome,
@@ -496,17 +495,17 @@ class PopulationFactory:
         Output a population file of two nucleotide values per SNP. Correctly outputs duplicate values if the
         chromosome is haploid
         :param size: size of the generated population
-        :param is_control: control population with no hidden pathogens
+        :param is_control: control population with no hidden deleterious
         :param male_odds: odds of a person being a biological male
         :return:
         """
-        pathogen_group_list = []
+        deleterious_group_list = []
         if not is_control:
-            # pick pathogen groups for population size
-            pathogen_group_list = PopulationFactory.pick_pathogen_groups(list(self.pathogens.values()), size)
-            pathogen_snps = {}
+            # pick deleterious groups for population size
+            deleterious_group_list = PopulationFactory.pick_deleterious_groups(list(self.deleterious.values()), size)
+            deleterious_snps = {}
         with open(self.population_dir + "population.ped", 'a+') as f, \
-                open(self.population_dir + "pop_pathogens.txt", "a+") as pp:
+                open(self.population_dir + "pop_deleterious.txt", "a+") as pp:
             if is_control:
                 row = 1000000
             else:
@@ -518,13 +517,13 @@ class PopulationFactory:
                 snp_values = []
                 j = 0
 
-                # If in test group... Select a pathogen group, then select pathogen snps.
+                # If in test group... Select a deleterious group, then select deleterious snps.
                 if not is_control:
-                    pathogen_snps = pathogen_group_list[i].select_mutations()
+                    deleterious_snps = deleterious_group_list[i].select_mutations()
                 for snp in self.ordered_snps:
                     if not is_male and snp.chromosome == 'Y':
                         continue  # Skip Y snps for women
-                    if is_control or snp.id not in pathogen_snps:
+                    if is_control or snp.id not in deleterious_snps:
                         random_roll = randoms[j]
                         j += 1
                         selected_nt = snp.pick_snp_value(random_roll)
@@ -537,10 +536,10 @@ class PopulationFactory:
                         snp_values.append(selected_nt)
                         snp_values.append(other_nt)
                     else:
-                        selected_nt = snp.pick_pathogen_value()
+                        selected_nt = snp.pick_deleterious_value()
                         snp_values.append(selected_nt)
                         snp_values.append(selected_nt)
-                        # TODO make it so pathogens can be recessive or dominant
+                        # TODO make it so deleterious can be recessive or dominant
                 # Output row - Family ID, Indiv ID, Dad ID, MomID, Sex, affection, snps
                 if is_male:
                     sex = 1
@@ -553,8 +552,8 @@ class PopulationFactory:
                 f.write("\t".join(map(lambda x: str(x), [row, row, 0, 0, sex, affection])) + "\t" + "\t".join(
                     snp_values) + "\n")
                 if not is_control:
-                    pp.write("%i\t%s\t" % (row, pathogen_group_list[i].name) +
-                             "\t".join(map(lambda x: "rs" + str(x), pathogen_snps.keys())) + "\n")
+                    pp.write("%i\t%s\t" % (row, deleterious_group_list[i].name) +
+                             "\t".join(map(lambda x: "rs" + str(x), deleterious_snps.keys())) + "\n")
                 row += 1
                 if i % 100 == 0:
                     group_name = "Test"
@@ -562,39 +561,39 @@ class PopulationFactory:
                         group_name = "Control"
                     print("Output %i memebers of the %s group." % (i, group_name))
 
-    def load_pathogens(self):
-        with open(self.pathogens_list_path, 'rt') as f:
+    def load_deleterious(self):
+        with open(self.deleterious_list_path, 'rt') as f:
             for line in f:
-                pg = PathogenGroup.from_json(line)
-                self.pathogens[pg.name] = pg
+                pg = DeleteriousGroup.from_json(line)
+                self.deleterious[pg.name] = pg
 
-    def pick_pathogen_snps(self, snp_data, pathogens_config):
+    def pick_deleterious_snps(self, snp_data, deleterious_config):
         """
-        Pick and store the snps that are the pathogens based on pathogens_config.
-        :param pathogens_config: file path for pathogens yaml file
-        :param snp_data: SNPTuples which are candidates for being a pathogen
-        :return: nothing... self.pathogens is populated
+        Pick and store the snps that are the deleterious based on deleterious_config.
+        :param deleterious_config: file path for deleterious yaml file
+        :param snp_data: SNPTuples which are candidates for being a deleterious
+        :return: nothing... self.deleterious is populated
         """
 
-        with open(pathogens_config, 'r') as p:
-            pathogen_yml = load(p, Loader=Loader)
-            for group, group_attr in pathogen_yml.items():
+        with open(deleterious_config, 'r') as p:
+            deleterious_yml = load(p, Loader=Loader)
+            for group, group_attr in deleterious_yml.items():
                 iterations = 1
                 if group_attr['num_instances']:
                     iterations = int(group_attr['num_instances'])
                 for i in range(0, iterations):
-                    path_group = PathogenGroup.from_yml(group_attr, snp_data, "%s-%s" % (group, i))
-                    self.pathogens[path_group.name] = path_group
-        with open(self.population_dir + "pathogens.json", 'w') as f:
-            for pathogen_group in self.pathogens.values():
-                f.write(pathogen_group.to_json() + "\n")
+                    path_group = DeleteriousGroup.from_yml(group_attr, snp_data, "%s-%s" % (group, i))
+                    self.deleterious[path_group.name] = path_group
+        with open(self.population_dir + "deleterious.json", 'w') as f:
+            for deleterious_group in self.deleterious.values():
+                f.write(deleterious_group.to_json() + "\n")
 
 
-class PathogenGroup:
+class DeleteriousGroup:
 
     def __init__(self, name, population_weight):
 
-        self.pathogens = {}
+        self.deleterious = {}
         self.name = name
         self.population_weight = population_weight
 
@@ -602,16 +601,16 @@ class PathogenGroup:
     def init_with_snps(cls, name, mutation_weights, snp_data, population_weight,
                        min_minor_allele_freq=0, max_minor_allele_freq=1.1):
         """
-        Inits the pathogen dictionary to be random alleles matching the freq filters. pathogens dict
+        Inits the deleterious dictionary to be random alleles matching the freq filters. deleterious dict
         stores snp.id => mutation weight mapping.
         :param mutation_weights: list of floats of the value each picked
         :param snp_data: snp dictionary
-        :param population_weight: the weight this pathogen group has (shares in test population)
+        :param population_weight: the weight this deleterious group has (shares in test population)
         :param name: name of this group
-        :param min_minor_allele_freq: Filter for picking snps. Min MAF of SNP to be in pathogen group
-        :param max_minor_allele_freq: Filter for picking snps. Max MAF of SNP to be in pathogen group
+        :param min_minor_allele_freq: Filter for picking snps. Min MAF of SNP to be in deleterious group
+        :param max_minor_allele_freq: Filter for picking snps. Max MAF of SNP to be in deleterious group
         """
-        pathogen_grp = cls(name, population_weight)
+        deleterious_grp = cls(name, population_weight)
 
         filter_snps = min_minor_allele_freq > 0 or max_minor_allele_freq < 0.5
         filtered_list = snp_data
@@ -622,13 +621,13 @@ class PathogenGroup:
                 filtered_list)
         snp_id_list = list(map(lambda x: x.id, filtered_list))
         if len(snp_id_list) == 0:
-            raise Exception("All SNPs filtered out. No snps match pathogen filter %f <= freq <= %f" %
+            raise Exception("All SNPs filtered out. No snps match deleterious filter %f <= freq <= %f" %
                             (min_minor_allele_freq, max_minor_allele_freq))
         i = 0
         for snp_id in numpy.random.choice(a=snp_id_list, size=len(mutation_weights), replace=False):
-            pathogen_grp.pathogens[int(snp_id)] = mutation_weights[i]
+            deleterious_grp.deleterious[int(snp_id)] = mutation_weights[i]
             i += 1
-        return pathogen_grp
+        return deleterious_grp
 
     @classmethod
     def from_yml(cls, yml_attr, snp_data, name):
@@ -660,26 +659,26 @@ class PathogenGroup:
     @classmethod
     def from_json(cls, json_line):
         pg = json.loads(json_line)
-        pathogen_group = cls(pg['name'], pg['population_weight'])
-        for snp, weight in pg['pathogens'].items():
-            pathogen_group.pathogens[snp] = weight
-        return pathogen_group
+        deleterious_group = cls(pg['name'], pg['population_weight'])
+        for snp, weight in pg['deleterious'].items():
+            deleterious_group.deleterious[snp] = weight
+        return deleterious_group
 
     def select_mutations(self):
         """
-        Randomly select mutations a single individual might have if they are in this PathogenGroup
+        Randomly select mutations a single individual might have if they are in this DeleteriousGroup
         :return: a colleciton of snp_ids that are mutated
         """
-        selected_pathogens = {}
-        shuffled_pathogens = list(self.pathogens.items())
-        random.shuffle(shuffled_pathogens)  # Shuffle to randomly select
+        selected_deleterious = {}
+        shuffled_deleterious = list(self.deleterious.items())
+        random.shuffle(shuffled_deleterious)  # Shuffle to randomly select
         agg_weight = 0
-        for p in shuffled_pathogens:
-            selected_pathogens[p[0]] = p[1]
+        for p in shuffled_deleterious:
+            selected_deleterious[p[0]] = p[1]
             agg_weight += p[1]  # sum the weights
             if agg_weight >= 1:
                 break
-        return selected_pathogens
+        return selected_deleterious
 
 
 def parse_cmd_args(args):
@@ -690,9 +689,9 @@ def parse_cmd_args(args):
     arg_parser.add_argument('-s', type=int, dest='size', help='size of afflicted/case group', required=True)
     arg_parser.add_argument('-c', type=int, dest='control_size', help='size of control group', required=True)
     arg_parser.add_argument('-x', type=int, dest='max_snps', help='max number of snps to load/generate')
-    arg_parser.add_argument('-p', type=str, default='pathogens.yml',
-                            help='location of pathogens config yaml file (default is pathogens.yml)',
-                            dest='pathogens_config')
+    arg_parser.add_argument('-p', type=str, default='deleterious.yml',
+                            help='location of deleterious config yaml file (default is deleterious.yml)',
+                            dest='deleterious_config')
     arg_parser.add_argument('-f', type=float, default=0.005, dest='min_freq',
                             help='min minor allele frequency for a SNP to be included, default is 0.005')
 
@@ -706,8 +705,8 @@ def parse_cmd_args(args):
     arg_parser.add_argument('-l', action='store_const', const=False, default=True, dest='generate_snps',
                             help='load from refSNP datababse instead of using '
                                  + 'simulated snps (connection config in db.yml)')
-    arg_parser.add_argument('--pathogens_file', type=str,
-                            help='<path> to a pathogens.json file that specifies the exact snps to use as pathogens')
+    arg_parser.add_argument('--deleterious_file', type=str,
+                            help='<path> to a deleterious.json file that specifies the exact snps to use as deleterious')
     arg_parser.add_argument('--snps_file', type=str,
                             help='<path> location of snps.json.gz file to use as selected snps')
     arg_parser.add_argument('--outdir', type=str,
@@ -726,10 +725,10 @@ def main(sys_args):
         db.default_init()
     pop_factory = PopulationFactory(num_processes=args.num_processes,
                                     generate_snps=args.generate_snps,
-                                    pathogens_list_path=args.pathogens_file,
+                                    deleterious_list_path=args.deleterious_file,
                                     sample_id_offset=args.offset,
                                     male_odds=args.male_odds,
-                                    pathogens_config=args.pathogens_config,
+                                    deleterious_config=args.deleterious_config,
                                     snps_path=args.snps_file,
                                     output_path=args.outdir)
     pop_factory.generate_population(args.control_size, args.size, args.min_freq,
