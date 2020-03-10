@@ -20,7 +20,7 @@ pip3 install -r requirements.txt
 python3 pop_factory.py -s <i>num_cases</i> -c <i>num_controls</i> -x <i>num_snps</i> -f <i>min_minor_allele_freq</i> 
 </pre>
 For example, the following command will generate a VCF file with 200 samples (100 cases with mutations configured in
- the pathogens.yml file and 100 controls), 100000 SNPs, and all selected SNPs will have a minor allele frequency >= 1%.
+ the deleterious.yml file and 100 controls), 100000 SNPs, and all selected SNPs will have a minor allele frequency >= 1%.
 ```shell script
 python3 pop_factory.py -s 100 -c 100 -x 100000 -f 0.01
 ```
@@ -32,7 +32,8 @@ python3 pop_factory.py -h
 ```
 ### Output Files
 PopFactory outputs a collection of files each time it is run.
-* population.vcf.gz - VCF file zipped with bgzip
+* population.vcf.gz - VCF file zipped with bgzip. For cases, they will have minor alleles selected for deleterious
+ mutation SNPs.
 * population.fam - [fam file](https://www.cog-genomics.org/plink/1.9/formats#fam) with information on each sample. It
  will have the following columns:
  1. Family ID ('FID') - all samples with have different family IDs
@@ -41,8 +42,11 @@ PopFactory outputs a collection of files each time it is run.
  4. Within-family ID of mother - always zero
  5. Sex code ('1' = male, '2' = female, '0' = unknown)
  6. Phenotype value ('1' = control, '2' = case, '-9'/'0'/non-numeric = missing data if case/control)
- * pathogens.json - JSON file with the selected pathogenic/causal mutations
- * 
+ * deleterious.json - JSON file with the selected deleterious mutations. This file can be used as an input
+   to future PopFactory runs.
+ * pop_deleterious.txt - text file which maps samples to deleterious groups and deleterious mutations
+ * snps.json.gz - JSON file with the SNPs that were used to generate the VCF file. This file can be used as an input
+  to future PopFactory runs.
  
  ## Generating Very Large Files
  If you want to generate a very large VCF file, there are two ways to speed things up:
@@ -63,13 +67,92 @@ If you desire to make a very large VCF file (millions of SNPs), it may be desira
  in parallel and merge them together. PopFactory supports easy use of [bcftools](http://www.htslib.org/doc/bcftools.html) 
  to index and merge generated VCF files.
  
- To run multiple jobs in parallel, do the following steps.
- 1. Run the tool once 
- ## Pathogens.yml (pathogens config)
+ To run multiple jobs in parallel, perform the following steps.
+ <ol><li> Run the tool once to generate/select SNPs and deleterious SNPs
+<pre>
+python3 pop_factory.py -s 0 -c 0 -p "path_to_deleterious.yml" -f 0.01 -x 10000000 --outdir "path_to_output_dir"
+</pre>
+This will select 10 million SNPs and pick deleterious SNPs (based on the yml config), but will make an empty VCF file.
+</li>
+<li>Run the tool again and use the outputs from step 1 as inputs to generate a population
+<pre>
+python3 pop_factory.py -s 1000 -c 1000 --outdir "path_to_output_dir2" --snps_file
+ "path_to_output_dir"/snps.json.gz --deleterious_file "path_to_output_dir"/deleterious.json
+</pre>
+This will make a VCF file with 1000 cases and 1000 controls using the passed in SNPs and deleterious SNPs
+</li>
+<li>Run the command as many times as you want using an offset to make sure all samples get unique IDs
+<pre>
+python3 pop_factory.py -s 1000 -c 1000 --outdir "path_to_output_dir3" --snps_file
+ "path_to_output_dir"/snps.json.gz --deleterious_file "path_to_output_dir"/deleterious.json <b>--offset 1000</b>
+</pre>
+</li>
+<li>Use bcftools to merge files as desired.
+<pre>
+bcftools index "path1/population.vcf.gz"
+bcftools index "path2/population.vcf.gz"
+bcftools merge "path1/population.vcf.gz" "path2/population.vcf.gz"
+</pre>
+</li>
+</ol>
+
+## Deleterious.yml (deleterious config)
+
+PopFactory selects deleterious mutations based on a configuration file in yaml format. The default location is the
+ deleterious.yml in the install directory. You can create your own deleterious config files. To mimic many
+  hypothetical scenarios. You can create deleterious groups, polygenic groups, rare or common groups, etc. 
+  
+  Here are the options:
  
- ## Downloading RefSNP Data
- 
- ### Database Config
+ ```shell script
+group_name:
+  mutation_weights:
+    - 1
+    - 0.5
+    - 0.2
+  num_instances: 1
+  population_weight: 2
+  max_minor_allele_freq: 0.10
+  min_minor_allele_freq: 0.01
+```
+* group_name - Can be any string to name the deleterious group
+* mutation_weights - list of items with the weights of each deleterious mutation. The number of items in list
+ determines the number of SNPs selected and the weights determine how many SNPs each afflicated case has. Every case
+  will have mutations (minor alleles) that add up to a weight >= 1. 
+  
+  Example 1: 4 SNPs, each case has 2 of 4
+ ```yaml
+mutation_weights:
+  - 0.5
+  - 0.5
+  - 0.5
+  - 0.5
+```  
+Example 2: 5 SNPs, the first SNP has double the weight. 3 SNPs needed unless the 1st SNP is selected for the case.
+```yaml
+mutation_weights:
+  - 0.7
+  - 0.35
+  - 0.35
+  - 0.35
+  - 0.35
+```
+Example 3: 3 SNPs, 1 out of 3 is needed
+```yaml
+mutation_weights:
+  - 1
+  - 1
+  - 1
+```
+* num_instances - number of copies of this group (SNPs are reselected)
+* population_weight - Proportional weight this group has in the overall afflicted population. For example, if the sum
+ of all population_weights is 20 and this group has a weight of 2, it will exist in 10% of cases.
+* max_minor_allele_freq - highest minor allele frequency allowed for SNPs in this group
+* min_minor_allele_freq - lower bound for minor allele frequency for SNPs in this group
+## Downloading RefSNP Data
+
+By default, Pop
+### Database Config
  
  
 
