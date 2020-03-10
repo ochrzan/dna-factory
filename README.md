@@ -151,8 +151,26 @@ mutation_weights:
 * min_minor_allele_freq - lower bound for minor allele frequency for SNPs in this group
 ## Downloading RefSNP Data
 
-By default, Pop
-### Database Config
- 
+By default, PopFactory generates SNPs based on a continuous distribution function created from RefSNP frequency data
+ (see snp_freq_cdf.csv for values). You can also download real RefSNP data from NIH and use it for SNP selection. The
+  RefSNP dataset is very large and building a RefSNP database can take some time. The downloaded data is shrunk to
+  only include data useful for PopFactory and stored in a SQL database (default SQLite). A full RefSNP SQLite DB can
+  be over 70 GB on disk.
+  
+  Here is how to download the data and build a DB:
+  
+```shell script
+python3 download.py
+```
+If you want to store the data in a different database than the default, supply a [sqlalchemy connection string](https://docs.sqlalchemy.org/en/13/core/engines.html) in **db
+.yml**.
+
+You can also download partial data (or fill in missing data) on a chromosome by chromosome basis.
+```shell script
+python3 download.py -c 1,2,X -n 4
+```
+This will download data for chromosomes 1, 2, and X. It will use 4 worker processes for downloading. It will only
+ delete data for the specified chromosomes and will leave the other chromosome data in place.
+
  
 
