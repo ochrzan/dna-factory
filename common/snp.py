@@ -87,6 +87,7 @@ def stripe_list(l, num_stripes):
         stripes[n % num_stripes].append(i)
     return stripes
 
+
 def obj_from_rowproxy(cls, row_proxy):
     o = cls.__new__(cls)
     for k, v in row_proxy.items():

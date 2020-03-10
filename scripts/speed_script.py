@@ -1,9 +1,7 @@
 import time
-from random import random
 
 import numpy
 import pop_factory
-import gzip
 from common.timer import Timer
 
 

@@ -34,7 +34,7 @@ class DownloadTestCase(unittest.TestCase):
         insert_vals = {"id": herman_cain, "chromosome": "Y"}
         dummy_val = db.connection.execute(db.ref_snps.insert(), insert_vals)
 
-        download.download_ref_snps(chromosome_list=["Y"], append=True, min_maf=0.2)
+        download.download_ref_snps(chromosome_list=["Y"], append_mode=True, min_maf=0.2)
         select_query = db.ref_snps.select().where(db.ref_snps.c.id == herman_cain)
         one_row = db.connection.execute(select_query).fetchone()
         self.assertTrue(one_row is not None)

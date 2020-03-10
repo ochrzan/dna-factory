@@ -1,16 +1,13 @@
 """
-Generates fake data for simulating possible scenarios for use in PLINK or other bio analysis tools.
-
-Similar to http://cnsgenomics.com/software/gcta/#GWASSimulation ?
+Generates VCF data for simulating possible scenarios for use in PLINK or other bio analysis tools.
 """
 import gc
-import getopt
 import json
 import random
 import sys
 import argparse
 import time
-from multiprocessing import Process, Queue, Manager
+from multiprocessing import Process, Queue
 import queue
 import heapq
 from Bio import bgzf
@@ -23,7 +20,7 @@ from yaml import load
 from common.db import db
 from common.timer import Timer
 from common.snp import RefSNP, Allele, is_haploid, \
-    split_list, CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION, stripe_list
+    CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION, stripe_list
 from definitions import ROOT_DIR
 
 try:
@@ -503,6 +500,7 @@ class PopulationFactory:
         :param male_odds: odds of a person being a biological male
         :return:
         """
+        pathogen_group_list = []
         if not is_control:
             # pick pathogen groups for population size
             pathogen_group_list = PopulationFactory.pick_pathogen_groups(list(self.pathogens.values()), size)
@@ -682,31 +680,6 @@ class PathogenGroup:
             if agg_weight >= 1:
                 break
         return selected_pathogens
-
-
-def print_help():
-    print("""
-Population Factory generates test VCF files based on it's configuration. 
-
-Accepted Inputs are:
-    -s n         size of test group (afflicted/case group)
-    -c n         size of control group
-    -f 0.n       min minor allele frequency for a SNP to be included, default is 0.005
-    -p <path>    location of pathogens config yaml file (default is pathogens.yml)
-    -m 0.n       odds of a population member being male (default 0.5)
-    -x n         max number of snps to load/use
-    -l           load from refSNP datababse instead of using simulated snps
-    -n n         number of worker processes to use 
-    -z n         gzip compression level (1=least 9=most) default 6
-    --pathogens  <path> to a pathogens.txt file that specifies the exact snps to use as pathogens
-    --offset n   starting offset for sample ids. Useful for creating VCF files that can be merged
-    --outdir     <path> directory to use for output files
-    --snps   <path> location of snps file to use as selected snps
-    
-    This app uses a single writer process and multiple worker processes that generate rows for the writer. 
-    If disk is slow the writer can bottleneck with a high worker process count (-n option).
-    Also, if more than 4 worker threads are used, lowering the compression level may improve speed.
-    """)
 
 
 def parse_cmd_args(args):

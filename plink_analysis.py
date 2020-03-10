@@ -75,6 +75,7 @@ def output_low_p_vals(assoc_file, pathogens_dict, num_vals=30):
 
 
 def analyze_assoc_results(argv):
+    # TODO switch to argparse
     try:
         opts, args = getopt.getopt(argv, "a:p:", ["help"])
     except getopt.GetoptError as err:

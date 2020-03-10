@@ -5,7 +5,7 @@ import common.timer as timer
 import gzip
 
 from Bio import bgzf
-from common.snp import RefSNP, Allele, obj_from_rowproxy
+from common.snp import RefSNP, Allele
 from common.db import db
 from datetime import datetime
 

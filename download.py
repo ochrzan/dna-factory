@@ -17,7 +17,7 @@ from definitions import ROOT_DIR
 DBSNP_FTP_DOMAIN = 'ftp.ncbi.nih.gov'
 DBSNP_LATEST_DIR = '/snp/latest_release/JSON'
 DBSNP_JSON_PATTERN = 'chr%s\\.json.bz2$'
-DOWNLOAD_DIR = os.path.join(ROOT_DIR, 'tmp_download')
+DOWNLOAD_DIR = os.path.join(ROOT_DIR, 'tmp_download') + os.path.sep
 
 
 def fetch_snp_file(json_file, queue, min_maf=0):
@@ -31,7 +31,7 @@ def fetch_snp_file(json_file, queue, min_maf=0):
     # Not sure if ftplib is threadsafe so use a ftp login per call
     ftp = ftp_login()
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    download_path = DOWNLOAD_DIR + '/' + json_file
+    download_path = DOWNLOAD_DIR + json_file
     download_needed = True
     if os.path.exists(download_path):
         md5 = []
@@ -41,7 +41,7 @@ def fetch_snp_file(json_file, queue, min_maf=0):
         print("FTP MD5 of %s: %s" % (json_file, md5))
         block_size = 65536
         hasher = hashlib.md5()
-        with open(DOWNLOAD_DIR + '/' + json_file, 'rb') as afile:
+        with open(DOWNLOAD_DIR + json_file, 'rb') as afile:
             buf = afile.read(block_size)
             while len(buf) > 0:
                 hasher.update(buf)
@@ -52,9 +52,9 @@ def fetch_snp_file(json_file, queue, min_maf=0):
             print("MD5 matches local copy. Skipping download.")
             download_needed = False
     if download_needed:
-        with open(DOWNLOAD_DIR + '/' + json_file, 'wb') as f:
+        with open(DOWNLOAD_DIR + json_file, 'wb') as f:
             ftp.retrbinary('RETR ' + json_file, f.write)
-    with bz2.BZ2File(DOWNLOAD_DIR + '/' + json_file, 'rb') as f_in:
+    with bz2.BZ2File(DOWNLOAD_DIR + json_file, 'rb') as f_in:
         chromosome = chromosome_from_filename(json_file)
         for line in f_in:
             snp = RefSNP.from_nih_json(line, chromosome)
@@ -94,7 +94,7 @@ def ftp_login():
     return ftp
 
 
-def download_ref_snps(chromosome_list, num_workers=2, append=False, min_maf=0):
+def download_ref_snps(chromosome_list, num_workers=2, append_mode=False, min_maf=0):
     """ Downloads all RefSNP data from NIH's FTP site. Requires ~250 GB of disk space
     """
     ftp = ftp_login()
@@ -106,7 +106,7 @@ def download_ref_snps(chromosome_list, num_workers=2, append=False, min_maf=0):
         chromosome_match = "(" + "|".join(chromosome_list).replace(" ", "") + ")"
         search_pattern = DBSNP_JSON_PATTERN % chromosome_match
     json_for_dl = [f for f in file_list if re.search(search_pattern, f)]
-    if not append:
+    if not append_mode:
         print("Removing old data from DB.")
 
         if not chromosome_list:

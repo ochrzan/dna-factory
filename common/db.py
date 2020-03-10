@@ -9,6 +9,7 @@ except ImportError:
 
 from definitions import ROOT_DIR
 
+
 class DbLayer:
 
     def __init__(self):
