@@ -292,11 +292,12 @@ class PopulationFactory:
             if snp_row["id"] != current_snp_id:
                 if snp and snp.valid_for_plink():
                     if self.snp_count >= max_snps - 1:
-                        print("Hit max_snps size of %i. Stopping loading snps." % max_snps)
+                        print("Hit max_snps size of %i. Stopping loading snps." % max_snps, flush=True)
                         break
                     self.add_snp_tuple(snp)
                     if self.snp_count % 100000 == 0:
-                        print("Loaded %i snps. %s" % (self.snp_count, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                        print("Loaded %i snps. %s" % (self.snp_count, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                              flush=True)
                 else:
                     invalid_count += 1
                 # otherwise new snp row
@@ -306,8 +307,8 @@ class PopulationFactory:
             snp.put_allele(Allele.from_row_proxy(snp_row))
             current_snp_id = snp_row["id"]
         self.add_snp_tuple(snp)
-        print("Skipped Invalid:        %i" % invalid_count)
-        print("Total Loaded:           %i" % len(self.ordered_snps))
+        print("Skipped Invalid:        %i" % invalid_count, flush=True)
+        print("Total Loaded:           %i" % len(self.ordered_snps), flush=True)
 
     def add_snp_tuple(self, snp):
         """
@@ -401,10 +402,10 @@ class PopulationFactory:
         with bgzf.BgzfWriter(filename=main_file, mode='wt+', compresslevel=compression_level) as f:
             header = gen_vcf_header(fam_data)
             f.write(header)
-            print("Outputing VCF lines")
+            print("Outputing VCF lines", flush=True)
             self.write_vcf_snps(fam_data, self.ordered_snps, f)
 
-        print("Finished VCF file output.")
+        print("Finished VCF file output.", flush=True)
 
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file, header=False):
@@ -441,7 +442,7 @@ class PopulationFactory:
                 else:
                     heapq.heappush(backlog, snp_tuple)
                 if snp_tuple[0] % 5000 == 0:
-                    print("Output %i/%i VCF lines in file." % (snp_tuple[0], len(snps)))
+                    print("Output %i/%i VCF lines in file." % (snp_tuple[0], len(snps)), flush=True)
 
     def queue_vcf_snps(self, fam_data, work_q, result_q):
 
@@ -489,77 +490,6 @@ class PopulationFactory:
                 print("Work Queue empty.")
                 time.sleep(1)
                 break
-
-    def output_population(self, size, is_control, male_odds):
-        """
-        Output a population file of two nucleotide values per SNP. Correctly outputs duplicate values if the
-        chromosome is haploid
-        :param size: size of the generated population
-        :param is_control: control population with no hidden deleterious
-        :param male_odds: odds of a person being a biological male
-        :return:
-        """
-        deleterious_group_list = []
-        if not is_control:
-            # pick deleterious groups for population size
-            deleterious_group_list = PopulationFactory.pick_deleterious_groups(list(self.deleterious.values()), size)
-            deleterious_snps = {}
-        with open(self.population_dir + "population.ped", 'a+') as f, \
-                open(self.population_dir + "pop_deleterious.txt", "a+") as pp:
-            if is_control:
-                row = 1000000
-            else:
-                row = 5000000
-            for i in range(size):
-                # Roll the dice for each snp and each allele. This will be a bit long for boys, but will work
-                randoms = numpy.random.rand(self.snp_count * 2)
-                is_male = randoms[0] < male_odds
-                snp_values = []
-                j = 0
-
-                # If in test group... Select a deleterious group, then select deleterious snps.
-                if not is_control:
-                    deleterious_snps = deleterious_group_list[i].select_mutations()
-                for snp in self.ordered_snps:
-                    if not is_male and snp.chromosome == 'Y':
-                        continue  # Skip Y snps for women
-                    if is_control or snp.id not in deleterious_snps:
-                        random_roll = randoms[j]
-                        j += 1
-                        selected_nt = snp.pick_snp_value(random_roll)
-                        if is_haploid(snp.chromosome, is_male):
-                            other_nt = selected_nt
-                        else:
-                            random_roll = randoms[j]
-                            j += 1
-                            other_nt = snp.pick_snp_value(random_roll)
-                        snp_values.append(selected_nt)
-                        snp_values.append(other_nt)
-                    else:
-                        selected_nt = snp.pick_deleterious_value()
-                        snp_values.append(selected_nt)
-                        snp_values.append(selected_nt)
-                        # TODO make it so deleterious can be recessive or dominant
-                # Output row - Family ID, Indiv ID, Dad ID, MomID, Sex, affection, snps
-                if is_male:
-                    sex = 1
-                else:
-                    sex = 2
-                if is_control:
-                    affection = 1
-                else:
-                    affection = 2
-                f.write("\t".join(map(lambda x: str(x), [row, row, 0, 0, sex, affection])) + "\t" + "\t".join(
-                    snp_values) + "\n")
-                if not is_control:
-                    pp.write("%i\t%s\t" % (row, deleterious_group_list[i].name) +
-                             "\t".join(map(lambda x: "rs" + str(x), deleterious_snps.keys())) + "\n")
-                row += 1
-                if i % 100 == 0:
-                    group_name = "Test"
-                    if is_control:
-                        group_name = "Control"
-                    print("Output %i memebers of the %s group." % (i, group_name))
 
     def load_deleterious(self):
         with open(self.deleterious_list_path, 'rt') as f:
