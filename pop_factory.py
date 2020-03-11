@@ -409,10 +409,8 @@ class PopulationFactory:
         print("Finished VCF file output.", flush=True)
 
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
-    def write_vcf_snps(self, fam_data, snps, file, header=False):
+    def write_vcf_snps(self, fam_data, snps, file):
         processes = []
-        # Queue is large since there is possible deadlock scenario if a worker thread gets behind by more than
-        # the queue size.
         result_q = Queue(100000)
 
         # Create a process for each split group
