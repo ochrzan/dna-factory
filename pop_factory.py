@@ -385,6 +385,7 @@ class PopulationFactory:
     def output_vcf_population(self, control_size, test_size, male_odds, compression_level):
         """
         Output a population .vcf file and companion .fam file.
+        :param compression_level: level of gzip compression (1-9)
         :param test_size: size of control group
         :param control_size: size of cases/test group
         :param male_odds: odds of a person being a biological male
@@ -449,8 +450,6 @@ class PopulationFactory:
         num_samples = len(fam_data)
         for snp_num, snp in work_q:
             try:
-                #snp_num, snp = work_q.get_nowait()
-
                 sample_values = []
                 # Roll the dice for each sample and each allele.
                 randoms = numpy.random.rand(num_samples * 2)
