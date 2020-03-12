@@ -20,7 +20,7 @@ from yaml import load
 from common.db import db
 from common.timer import Timer
 from common.snp import RefSNP, Allele, is_haploid, \
-    CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION, stripe_list
+    CHROMOSOME_PROB, CHROMOSOME_LIST, CHROMOSOME_MAX_POSITION, stripe_list, split_list
 from definitions import ROOT_DIR
 
 try:
@@ -399,19 +399,23 @@ class PopulationFactory:
 
         fam_data = self.generate_fam_file(control_size, test_size, male_odds, deleterious_group_list)
         main_file = self.population_dir + "population.vcf.gz"
-
+        CHUNK_SIZE = 500000  # Defines work chunks that have a sync point after each one. Helps with memory issues.
         with bgzf.BgzfWriter(filename=main_file, mode='wt+', compresslevel=compression_level) as f:
             header = gen_vcf_header(fam_data)
             f.write(header)
             print("Outputing VCF lines", flush=True)
-            self.write_vcf_snps(fam_data, self.ordered_snps, f)
+            chunks = int(len(self.ordered_snps) / CHUNK_SIZE)
+            for i, snps_list in enumerate(split_list(self.ordered_snps, chunks)):
+                self.write_vcf_snps(fam_data, snps_list, f)
+                print("%s Finished work chunk %i of %i." %
+                      (datetime.now().strftime("%Y-%m-%d %H:%M"), i, chunks), flush=True)
 
         print("Finished VCF file output.", flush=True)
 
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file):
         processes = []
-        result_q = Queue(100000)
+        result_q = Queue(10000)
 
         # Create a process for each split group
         n_processes = self.num_processes
@@ -428,65 +432,71 @@ class PopulationFactory:
         cur_snp = start_index
         backlog = []
         while any(p.is_alive() for p in processes):
-            while not result_q.empty():
-                snp_tuple = result_q.get()
+            try:
+                snp_tuple = result_q.get(timeout=1.0)
                 if snp_tuple[0] == cur_snp:
                     file.write(snp_tuple[1])
                     cur_snp += 1
+                    if cur_snp % 5000 == 0:
+                        print("%s Output %i/%i VCF lines in chunk." %
+                              (datetime.now().strftime("%Y-%m-%d %H:%M"), cur_snp, len(snps)), flush=True)
                     while backlog and cur_snp == backlog[0][0]:
                         # Next item is on the min-heap. Pull as much as you can
                         heap_tuple = heapq.heappop(backlog)
                         file.write(heap_tuple[1])
                         cur_snp += 1
+                        if cur_snp % 5000 == 0:
+                            print("%s Output %i/%i VCF lines in chunk." %
+                                  (datetime.now().strftime("%Y-%m-%d %H:%M"), cur_snp, len(snps)), flush=True)
                 else:
                     heapq.heappush(backlog, snp_tuple)
-                if snp_tuple[0] % 5000 == 0:
-                    print("Output %i/%i VCF lines in file." % (snp_tuple[0], len(snps)), flush=True)
+            except queue.Empty:
+                print("Queue Empty. Waiting for more items. Current index %i" % cur_snp, flush=True)
+                time.sleep(1)
+        result_q.close()
+
 
     def queue_vcf_snps(self, fam_data, work_q, result_q):
 
         num_samples = len(fam_data)
         for snp_num, snp in work_q:
-            try:
-                sample_values = []
-                # Roll the dice for each sample and each allele.
-                randoms = numpy.random.rand(num_samples * 2)
-                for i, sample in enumerate(fam_data):
-                    is_male = sample.is_male()
+            sample_values = []
+            # Roll the dice for each sample and each allele.
+            randoms = numpy.random.rand(num_samples * 2)
+            for i, sample in enumerate(fam_data):
+                is_male = sample.is_male()
 
-                    if not is_male and snp.chromosome == 'Y':
-                        # No Y chromosome for women
-                        sample_values.append(".")
-                    if sample.is_control or snp.id not in sample.deleterious_snps:
-                        random_roll = randoms[i * 2]
-                        selected_nt = snp.pick_allele_index(random_roll)
-                        if is_haploid(snp.chromosome, is_male):
-                            sample_values.append(str(selected_nt))
-                            continue
-                        else:
-                            random_roll = randoms[i * 2 + 1]
-                            other_nt = snp.pick_allele_index(random_roll)
-                        sample_values.append("%i/%i" % (selected_nt, other_nt))
+                if not is_male and snp.chromosome == 'Y':
+                    # No Y chromosome for women
+                    sample_values.append(".")
+                if sample.is_control or snp.id not in sample.deleterious_snps:
+                    random_roll = randoms[i * 2]
+                    selected_nt = snp.pick_allele_index(random_roll)
+                    if is_haploid(snp.chromosome, is_male):
+                        sample_values.append(str(selected_nt))
+                        continue
                     else:
-                        if is_haploid(snp.chromosome, is_male):
-                            sample_values.append("1")
-                        else:
-                            sample_values.append("1/1")
-                        # TODO make it so deleterious mutations can be recessive or dominant
-                # Output row - CHROM, POS, ID, REF, ALT, QUAL FILTER, INFO, FORMAT, (SAMPLE ID ...)
-                # 1      10583 rs58108140  G   A   25   PASS    .    GT     0/0     0/0     0/0
-                line = "%s\t%i\trs%s\t%s\t%s\t40\tPASS\t.\tGT\t" % (snp.chromosome,
-                                                                    snp.position,
-                                                                    snp.id,
-                                                                    snp.ref_allele_tuple()[0],
-                                                                    snp.alt_alleles()) + \
-                       "\t".join(sample_values) + "\n"
-                result_q.put((snp_num, line))
-            except queue.Empty:
-                # pause to allow items being queued to complete being sent
-                print("Work Queue empty.")
-                time.sleep(1)
-                break
+                        random_roll = randoms[i * 2 + 1]
+                        other_nt = snp.pick_allele_index(random_roll)
+                    sample_values.append("%i/%i" % (selected_nt, other_nt))
+                else:
+                    if is_haploid(snp.chromosome, is_male):
+                        sample_values.append("1")
+                    else:
+                        sample_values.append("1/1")
+                    # TODO make it so deleterious mutations can be recessive or dominant
+            # Output row - CHROM, POS, ID, REF, ALT, QUAL FILTER, INFO, FORMAT, (SAMPLE ID ...)
+            # 1      10583 rs58108140  G   A   25   PASS    .    GT     0/0     0/0     0/0
+            line = "%s\t%i\trs%s\t%s\t%s\t40\tPASS\t.\tGT\t" % (snp.chromosome,
+                                                                snp.position,
+                                                                snp.id,
+                                                                snp.ref_allele_tuple()[0],
+                                                                snp.alt_alleles()) + \
+                   "\t".join(sample_values) + "\n"
+            result_q.put((snp_num, line))
+        # Sleep for a few seconds to allow queue to finish sending any items
+        time.sleep(1)
+
 
     def load_deleterious(self):
         with open(self.deleterious_list_path, 'rt') as f:
