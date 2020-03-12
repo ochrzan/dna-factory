@@ -36,7 +36,7 @@ OUTPUT_DIR = os.path.join(ROOT_DIR, "populations")
 def gen_vcf_header(fam_data):
     header = "##fileformat=VCFv4.3\n"
     header += "##filedate=%s\n" % datetime.now().strftime("%Y%m%d %H:%M")
-    header += "##source=SNP_Simulator\n"
+    header += "##source=PopFactory\n"
     header += '##FILTER=<ID=q10,Description="Quality below 10">\n'
     header += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
     header += "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t"
@@ -434,7 +434,7 @@ class PopulationFactory:
                     file.write(snp_tuple[1])
                     cur_snp += 1
                     while backlog and cur_snp == backlog[0][0]:
-                        # Next item is on the min-heap
+                        # Next item is on the min-heap. Pull as much as you can
                         heap_tuple = heapq.heappop(backlog)
                         file.write(heap_tuple[1])
                         cur_snp += 1
