@@ -405,17 +405,19 @@ class PopulationFactory:
             f.write(header)
             print("Outputing VCF lines", flush=True)
             chunks = int(len(self.ordered_snps) / CHUNK_SIZE)
+            if chunks < 1:
+                chunks = 1
             for i, snps_list in enumerate(split_list(self.ordered_snps, chunks)):
                 self.write_vcf_snps(fam_data, snps_list, f)
                 print("%s Finished work chunk %i of %i." %
-                      (datetime.now().strftime("%Y-%m-%d %H:%M"), i, chunks), flush=True)
+                      (datetime.now().strftime("%Y-%m-%d %H:%M"), i + 1, chunks), flush=True)
 
         print("Finished VCF file output.", flush=True)
 
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file):
         processes = []
-        result_q = Queue(10000)
+        result_q = Queue(100000)
 
         # Create a process for each split group
         n_processes = self.num_processes
@@ -432,27 +434,31 @@ class PopulationFactory:
         cur_snp = start_index
         backlog = []
         while any(p.is_alive() for p in processes):
-            try:
-                snp_tuple = result_q.get(timeout=1.0)
-                if snp_tuple[0] == cur_snp:
-                    file.write(snp_tuple[1])
-                    cur_snp += 1
-                    if cur_snp % 5000 == 0:
-                        print("%s Output %i/%i VCF lines in chunk." %
-                              (datetime.now().strftime("%Y-%m-%d %H:%M"), cur_snp, len(snps)), flush=True)
-                    while backlog and cur_snp == backlog[0][0]:
-                        # Next item is on the min-heap. Pull as much as you can
-                        heap_tuple = heapq.heappop(backlog)
-                        file.write(heap_tuple[1])
+            while True:
+                try:
+                    snp_tuple = result_q.get(timeout=1)
+                    if snp_tuple[0] == cur_snp:
+                        file.write(snp_tuple[1])
                         cur_snp += 1
                         if cur_snp % 5000 == 0:
-                            print("%s Output %i/%i VCF lines in chunk." %
-                                  (datetime.now().strftime("%Y-%m-%d %H:%M"), cur_snp, len(snps)), flush=True)
-                else:
-                    heapq.heappush(backlog, snp_tuple)
-            except queue.Empty:
-                print("Queue Empty. Waiting for more items. Current index %i" % cur_snp, flush=True)
-                time.sleep(1)
+                                print("%s Output %i/%i VCF lines in chunk. Queue Size - %i" %
+                                      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps), result_q.qsize()),
+                                      flush=True)
+                        while backlog and cur_snp == backlog[0][0]:
+                            # Next item is on the min-heap. Pull as much as you can
+                            heap_tuple = heapq.heappop(backlog)
+                            file.write(heap_tuple[1])
+                            cur_snp += 1
+                            if cur_snp % 5000 == 0:
+                                    print("%s Output %i/%i VCF lines in chunk. Queue Size - %i" %
+                                          (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps), result_q.qsize()),
+                                          flush=True)
+                    else:
+                        heapq.heappush(backlog, snp_tuple)
+                except queue.Empty:
+                    #print("Queue Empty. Waiting for more items. Current index %i" % cur_snp, flush=True)
+                    break
+
         result_q.close()
 
 
