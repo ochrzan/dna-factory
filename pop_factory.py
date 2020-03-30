@@ -7,7 +7,7 @@ import random
 import sys
 import argparse
 import time
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Pipe
 import queue
 import heapq
 from Bio import bgzf
@@ -417,48 +417,50 @@ class PopulationFactory:
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file):
         processes = []
-        result_q = Queue(100000)
+        p_out, p_in = Pipe()
 
         # Create a process for each split group
-        n_processes = self.num_processes
+        n_processes = 1
         if len(snps) < n_processes:
             # Small chunk of work so use 1 process
             n_processes = 1
         start_index = 1
         work_chunks = stripe_list(list(enumerate(snps, start=start_index)), n_processes)
 
-        for i in range(n_processes):
-            p = Process(target=self.queue_vcf_snps, args=(fam_data, work_chunks[i], result_q))
+        for i in [0]:
+            p = Process(target=self.queue_vcf_snps, args=(fam_data, work_chunks[i], p_in))
             processes.append(p)
             p.start()
         cur_snp = start_index
         backlog = []
-        while any(p.is_alive() for p in processes):
-            while True:
-                try:
-                    snp_tuple = result_q.get(timeout=1)
-                    if snp_tuple[0] == cur_snp:
-                        file.write(snp_tuple[1])
+
+        while True:
+            try:
+                snp_tuple = p_out.recv()    # Read from the output pipe and do nothing
+                if snp_tuple == 'DONE':
+                    break
+                if snp_tuple[0] == cur_snp:
+                    file.write(snp_tuple[1])
+                    cur_snp += 1
+                    if cur_snp % 5000 == 0:
+                            print("%s Output %i/%i VCF lines in chunk." %
+                                  (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps)),
+                                  flush=True)
+                    while backlog and cur_snp == backlog[0][0]:
+                        # Next item is on the min-heap. Pull as much as you can
+                        heap_tuple = heapq.heappop(backlog)
+                        file.write(heap_tuple[1])
                         cur_snp += 1
                         if cur_snp % 5000 == 0:
-                                print("%s Output %i/%i VCF lines in chunk. Queue Size - %i" %
-                                      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps), result_q.qsize()),
+                                print("%s Output %i/%i VCF lines in chunk." %
+                                      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps)),
                                       flush=True)
-                        while backlog and cur_snp == backlog[0][0]:
-                            # Next item is on the min-heap. Pull as much as you can
-                            heap_tuple = heapq.heappop(backlog)
-                            file.write(heap_tuple[1])
-                            cur_snp += 1
-                            if cur_snp % 5000 == 0:
-                                    print("%s Output %i/%i VCF lines in chunk. Queue Size - %i" %
-                                          (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps), result_q.qsize()),
-                                          flush=True)
-                    else:
-                        heapq.heappush(backlog, snp_tuple)
-                except queue.Empty:
-                    break
+                else:
+                    heapq.heappush(backlog, snp_tuple)
+            except queue.Empty:
+                break
 
-        result_q.close()
+        p_out.close()
 
     def queue_vcf_snps(self, fam_data, work_q, result_q):
 
@@ -497,9 +499,11 @@ class PopulationFactory:
                                                                 snp.ref_allele_tuple()[0],
                                                                 snp.alt_alleles()) + \
                    "\t".join(sample_values) + "\n"
-            result_q.put((snp_num, line))
+            result_q.send((snp_num, line))
         # Sleep for a few seconds to allow queue to finish sending any items
+        result_q.send("DONE")
         time.sleep(1)
+        result_q.close()
 
     def load_deleterious(self):
         with open(self.deleterious_list_path, 'rt') as f:
