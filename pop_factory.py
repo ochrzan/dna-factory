@@ -456,11 +456,9 @@ class PopulationFactory:
                     else:
                         heapq.heappush(backlog, snp_tuple)
                 except queue.Empty:
-                    #print("Queue Empty. Waiting for more items. Current index %i" % cur_snp, flush=True)
                     break
 
         result_q.close()
-
 
     def queue_vcf_snps(self, fam_data, work_q, result_q):
 
@@ -503,13 +501,13 @@ class PopulationFactory:
         # Sleep for a few seconds to allow queue to finish sending any items
         time.sleep(1)
 
-
     def load_deleterious(self):
         with open(self.deleterious_list_path, 'rt') as f:
             for line in f:
                 pg = DeleteriousGroup.from_json(line)
                 self.deleterious[pg.name] = pg
 
+    @Timer(name="pick_deleterious_snps", text="Elapsed pick_deleterious_snps {:0.2f} sec", logger=print)
     def pick_deleterious_snps(self, snp_data, deleterious_config):
         """
         Pick and store the snps that are the deleterious based on deleterious_config.
@@ -521,11 +519,8 @@ class PopulationFactory:
         with open(deleterious_config, 'r') as p:
             deleterious_yml = load(p, Loader=Loader)
             for group, group_attr in deleterious_yml.items():
-                iterations = 1
-                if group_attr['num_instances']:
-                    iterations = int(group_attr['num_instances'])
-                for i in range(0, iterations):
-                    path_group = DeleteriousGroup.from_yml(group_attr, snp_data, "%s-%s" % (group, i))
+                path_groups = DeleteriousGroup.from_yml(group_attr, snp_data, group)
+                for path_group in path_groups:
                     self.deleterious[path_group.name] = path_group
         with open(self.population_dir + "deleterious.json", 'w') as f:
             for deleterious_group in self.deleterious.values():
@@ -541,20 +536,7 @@ class DeleteriousGroup:
         self.population_weight = population_weight
 
     @classmethod
-    def init_with_snps(cls, name, mutation_weights, snp_data, population_weight,
-                       min_minor_allele_freq=0, max_minor_allele_freq=1.1):
-        """
-        Inits the deleterious dictionary to be random alleles matching the freq filters. deleterious dict
-        stores snp.id => mutation weight mapping.
-        :param mutation_weights: list of floats of the value each picked
-        :param snp_data: snp dictionary
-        :param population_weight: the weight this deleterious group has (shares in test population)
-        :param name: name of this group
-        :param min_minor_allele_freq: Filter for picking snps. Min MAF of SNP to be in deleterious group
-        :param max_minor_allele_freq: Filter for picking snps. Max MAF of SNP to be in deleterious group
-        """
-        deleterious_grp = cls(name, population_weight)
-
+    def snp_ids_from_list(cls, snp_data, min_minor_allele_freq, max_minor_allele_freq):
         filter_snps = min_minor_allele_freq > 0 or max_minor_allele_freq < 0.5
         filtered_list = snp_data
         if filter_snps:
@@ -562,10 +544,23 @@ class DeleteriousGroup:
                 lambda x: min_minor_allele_freq <= (x.minor_allele_tuple()[1]
                                                     - x.ref_allele_tuple()[1]) <= max_minor_allele_freq,
                 filtered_list)
-        snp_id_list = list(map(lambda x: x.id, filtered_list))
-        if len(snp_id_list) == 0:
-            raise Exception("All SNPs filtered out. No snps match deleterious filter %f <= freq <= %f" %
-                            (min_minor_allele_freq, max_minor_allele_freq))
+        return list(map(lambda x: x.id, filtered_list))
+
+    @classmethod
+    def init_with_snps(cls, name, mutation_weights, snp_id_list, population_weight):
+        """
+        Inits the deleterious dictionary to be random alleles matching the freq filters. deleterious dict
+        stores snp.id => mutation weight mapping.
+        :param mutation_weights: list of floats of the value each picked
+        :param snp_id_list: filteted list of SNP ids to choose from
+        :param population_weight: the weight this deleterious group has (shares in test population)
+        :param name: name of this group
+        """
+        deleterious_grp = cls(name, population_weight)
+
+        if not snp_id_list:
+            raise Exception("No SNPs in list to choose from. " +
+                            "SNPs must have all been filtered out by deleterious config.")
         i = 0
         for snp_id in numpy.random.choice(a=snp_id_list, size=len(mutation_weights), replace=False):
             deleterious_grp.deleterious[int(snp_id)] = mutation_weights[i]
@@ -588,13 +583,18 @@ class DeleteriousGroup:
             else:
                 raise Exception('max_minor_allele_freq must be between 0 and 0.5. yml value = {}'.format(
                     yml_attr['max_minor_allele_freq']))
-
-        return cls.init_with_snps(name,
-                                  yml_attr['mutation_weights'],
-                                  snp_data,
-                                  yml_attr['population_weight'],
-                                  min_minor_allele_freq,
-                                  max_minor_allele_freq)
+        iterations = 1
+        if yml_attr.get('num_instances'):
+            iterations = int(yml_attr['num_instances'])
+        filtered_snp_ids = DeleteriousGroup.snp_ids_from_list(snp_data, min_minor_allele_freq, max_minor_allele_freq)
+        path_groups = []
+        for i in range(0, iterations):
+            group_name = "%s-%s" % (name, i)
+            path_groups.append(cls.init_with_snps(group_name,
+                               yml_attr['mutation_weights'],
+                               filtered_snp_ids,
+                               yml_attr['population_weight']))
+        return path_groups
 
     def to_json(self):
         return json.dumps(vars(self))
