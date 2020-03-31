@@ -24,27 +24,24 @@ class SNPTupleTest(unittest.TestCase):
     def test_pick_allele_index(self):
         picked = self.snp_tuple.pick_allele_index(0.95)
         self.assertEqual(2, picked, "Should pick index 2")
-        picked = self.snp_tuple.pick_snp_value(0.4)
+        picked = self.snp_tuple.pick_allele_index(0.4)
         self.assertEqual(0, picked, "Should pick 0")
-
-    def test_pick_deleterious(self):
-        picked = self.snp_tuple.pick_deleterious_value()
-        self.assertEqual("A", picked, "Should pick A as deleterious (2nd most frequent)")
 
 
 class DeleteriousGroupTest(unittest.TestCase):
 
     def setUp(self):
-        self.snp_data = [(1, [test_snp_tuple(1), test_snp_tuple(2), test_snp_tuple(3), test_snp_tuple(4)])]
+        self.snp_data = [test_snp_tuple(1), test_snp_tuple(2), test_snp_tuple(3), test_snp_tuple(4)]
 
     def test_from_yml(self):
-        pg = pop_factory.DeleteriousGroup.from_yml({"mutation_weights": [0.5, 0.5, 0.5],
+        pgs = pop_factory.DeleteriousGroup.from_yml({"mutation_weights": [0.5, 0.5, 0.5],
                                                  "num_instances": 2,
                                                  "population_weight": 5,
                                                  "min_minor_allele_freq": 0.01}, self.snp_data, "groupA")
-        self.assertEqual(5, pg.population_weight, "Population Weight should be 5")
-        self.assertEqual(3, len(pg.deleterious), "Should have picked 3 deleterious")
-        self.assertEqual(2, len(pg.select_mutations()))
+        self.assertEqual(5, pgs[0].population_weight, "Population Weight should be 5")
+        self.assertEqual(3, len(pgs[0].deleterious), "Should have picked 3 deleterious")
+        self.assertEqual(2, len(pgs[0].select_mutations()))
+        self.assertEqual(2, len(pgs))
 
 
 class PopulationFactoryTest(unittest.TestCase):
@@ -56,9 +53,17 @@ class PopulationFactoryTest(unittest.TestCase):
     def test_deleterious_groups(self):
         groups = []
         for x in range(1, 3):
-            groups.append(pop_factory.DeleteriousGroup.init_with_snps("group%i" % x, [0.5, 0.5], self.snp_tuples, 1))
+            groups.append(pop_factory.DeleteriousGroup.init_with_snps(
+                "group%i" % x,
+                [0.5, 0.5],
+                pop_factory.DeleteriousGroup.snp_ids_from_list(self.snp_tuples),
+                1))
         for x in range(3, 5):
-            groups.append(pop_factory.DeleteriousGroup.init_with_snps("group%i" % x, [0.5, 0.5], self.snp_tuples, 10))
+            groups.append(pop_factory.DeleteriousGroup.init_with_snps(
+                "group%i" % x,
+                [0.5, 0.5],
+                pop_factory.DeleteriousGroup.snp_ids_from_list(self.snp_tuples),
+                10))
 
         selected_groups = pop_factory.PopulationFactory.pick_deleterious_groups(groups, 100)
         counts = {}
@@ -87,7 +92,7 @@ class ArgParserTest(unittest.TestCase):
         self.assertEqual(0.1, args.min_freq)
         self.assertEqual(0.7, args.male_odds)
         self.assertEqual(2500, args.max_snps)
-        self.assertEqual(True, args.generate_snps)
+        self.assertEqual(False, args.generate_snps)
         self.assertEqual("/home/ochrzan/workspace/deleterious.json", args.deleterious_file)
         self.assertEqual(300, args.offset)
         self.assertEqual("my_snps.json", args.snps_file)

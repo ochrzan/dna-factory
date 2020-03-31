@@ -7,7 +7,7 @@ import random
 import sys
 import argparse
 import time
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Pipe
 import queue
 import heapq
 from Bio import bgzf
@@ -399,12 +399,12 @@ class PopulationFactory:
 
         fam_data = self.generate_fam_file(control_size, test_size, male_odds, deleterious_group_list)
         main_file = self.population_dir + "population.vcf.gz"
-        CHUNK_SIZE = 500000  # Defines work chunks that have a sync point after each one. Helps with memory issues.
+        chunk_size = 1000000  # Defines work chunks of reasonable size. Helps with possible memory issues.
         with bgzf.BgzfWriter(filename=main_file, mode='wt+', compresslevel=compression_level) as f:
             header = gen_vcf_header(fam_data)
             f.write(header)
             print("Outputing VCF lines", flush=True)
-            chunks = int(len(self.ordered_snps) / CHUNK_SIZE)
+            chunks = int(len(self.ordered_snps) / chunk_size)
             if chunks < 1:
                 chunks = 1
             for i, snps_list in enumerate(split_list(self.ordered_snps, chunks)):
@@ -417,50 +417,58 @@ class PopulationFactory:
     @Timer(text="Finished write_vcf_snps chunk Elapsed time: {:0.4f} seconds", logger=print)
     def write_vcf_snps(self, fam_data, snps, file):
         processes = []
-        result_q = Queue(100000)
-
-        # Create a process for each split group
         n_processes = self.num_processes
+
         if len(snps) < n_processes:
             # Small chunk of work so use 1 process
             n_processes = 1
         start_index = 1
         work_chunks = stripe_list(list(enumerate(snps, start=start_index)), n_processes)
-
+        pipes = {}
+        # Create a process for each stripe
         for i in range(n_processes):
-            p = Process(target=self.queue_vcf_snps, args=(fam_data, work_chunks[i], result_q))
+            p_out, p_in = Pipe()
+            pipes[p_out] = True
+            p = Process(target=self.queue_vcf_snps, args=(fam_data, work_chunks[i], p_in))
             processes.append(p)
             p.start()
         cur_snp = start_index
         backlog = []
-        while any(p.is_alive() for p in processes):
-            while True:
+
+        while any(pipes.values()):
+            for p_out, is_running in pipes.items():
+                if not is_running:
+                    continue
                 try:
-                    snp_tuple = result_q.get(timeout=1)
+                    snp_tuple = p_out.recv()    # Read from the output pipe
+                    if snp_tuple == 'DONE':
+                        pipes[p_out] = False    # Mark pipe as done
+                        p_out.close()
+                        continue
                     if snp_tuple[0] == cur_snp:
                         file.write(snp_tuple[1])
                         cur_snp += 1
-                        if cur_snp % 5000 == 0:
-                                print("%s Output %i/%i VCF lines in chunk. Queue Size - %i" %
-                                      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps), result_q.qsize()),
+                        if cur_snp % 10000 == 0:
+                                print("%s Output %i/%i VCF lines in chunk." %
+                                      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps)),
                                       flush=True)
                         while backlog and cur_snp == backlog[0][0]:
                             # Next item is on the min-heap. Pull as much as you can
                             heap_tuple = heapq.heappop(backlog)
                             file.write(heap_tuple[1])
                             cur_snp += 1
-                            if cur_snp % 5000 == 0:
-                                    print("%s Output %i/%i VCF lines in chunk. Queue Size - %i" %
-                                          (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps), result_q.qsize()),
+                            if cur_snp % 10000 == 0:
+                                    print("%s Output %i/%i VCF lines in chunk." %
+                                          (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cur_snp, len(snps)),
                                           flush=True)
                     else:
+                        # This heapq is no longer needed with the way items are striped, but left here
+                        # in case a different multithreading approach is used with inconsistent work order
                         heapq.heappush(backlog, snp_tuple)
                 except queue.Empty:
                     break
 
-        result_q.close()
-
-    def queue_vcf_snps(self, fam_data, work_q, result_q):
+    def queue_vcf_snps(self, fam_data, work_q, result_p):
 
         num_samples = len(fam_data)
         for snp_num, snp in work_q:
@@ -497,9 +505,11 @@ class PopulationFactory:
                                                                 snp.ref_allele_tuple()[0],
                                                                 snp.alt_alleles()) + \
                    "\t".join(sample_values) + "\n"
-            result_q.put((snp_num, line))
-        # Sleep for a few seconds to allow queue to finish sending any items
+            result_p.send((snp_num, line))
+        result_p.send("DONE")
+        # Sleep for a second to allow pipe to finish sending any items
         time.sleep(1)
+        result_p.close()
 
     def load_deleterious(self):
         with open(self.deleterious_list_path, 'rt') as f:
@@ -536,7 +546,7 @@ class DeleteriousGroup:
         self.population_weight = population_weight
 
     @classmethod
-    def snp_ids_from_list(cls, snp_data, min_minor_allele_freq, max_minor_allele_freq):
+    def snp_ids_from_list(cls, snp_data, min_minor_allele_freq=0, max_minor_allele_freq=1):
         filter_snps = min_minor_allele_freq > 0 or max_minor_allele_freq < 0.5
         filtered_list = snp_data
         if filter_snps:
@@ -661,8 +671,11 @@ def parse_cmd_args(args):
 
 def main(sys_args):
     args = parse_cmd_args(sys_args)
-    if args.num_processes > 4 and args.compression_level > 5:
-        print("Recommend using a compression level of 3 (-z 3) or lower with 5 or more worker threads.")
+    if args.num_processes > 2 and args.compression_level > 5:
+        print("Recommend using a compression level of 3 (-z 3) or lower with 3 or more worker threads.")
+
+    if args.num_processes > 4:
+        print("Warning - Using more than 4 worker processes usually does not improve speed.")
 
     if not args.generate_snps:
         db.default_init()
