@@ -239,7 +239,7 @@ class PopulationFactory:
         else:
             if self.generate_snps:
                 snp_factory = SnpFactory.init_from_cdf_file()
-                self.ordered_snps = snp_factory.random_snp_tuples(max_snps)
+                self.ordered_snps = snp_factory.random_snp_tuples(max_snps, min_maf=min_freq)
             else:
                 self.load_snps_db(min_freq, max_snps)
         self.ordered_snps.sort(key=lambda x: (x.chromosome, x.position))
