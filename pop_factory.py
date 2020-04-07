@@ -481,6 +481,7 @@ class PopulationFactory:
                 if not is_male and snp.chromosome == 'Y':
                     # No Y chromosome for women
                     sample_values.append(".")
+                    continue
                 if sample.is_control or snp.id not in sample.deleterious_snps:
                     random_roll = randoms[i * 2]
                     selected_nt = snp.pick_allele_index(random_roll)
@@ -673,9 +674,6 @@ def main(sys_args):
     args = parse_cmd_args(sys_args)
     if args.num_processes > 2 and args.compression_level > 5:
         print("Recommend using a compression level of 3 (-z 3) or lower with 3 or more worker threads.")
-
-    if args.num_processes > 4:
-        print("Warning - Using more than 4 worker processes usually does not improve speed.")
 
     if not args.generate_snps:
         db.default_init()
