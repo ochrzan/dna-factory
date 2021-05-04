@@ -1,13 +1,13 @@
-# PopFactory (Population Factory)
+# dna-factory 
 
-PopFactory is a tool for generating simulated genetic population data for use in genetic analysis tools (especially
- GWAS tools).  PopFactory creates [VCF files](https://samtools.github.io/hts-specs/) that are zipped in bgzf format
-  for easy use with samtools.  In order to generate large VCF files, PopFactory can scale out to multiple processes and horizontally to
+dna-factory is a tool for generating simulated genetic population data for use in genetic analysis tools (especially
+ GWAS tools).  dna-factory creates [VCF files](https://samtools.github.io/hts-specs/) that are zipped in bgzf format
+  for easy use with samtools.  In order to generate large VCF files, dna-factory can scale out to multiple processes and horizontally to
   multiple nodes. 
  
  ## Installing
  
- PopFactory is written in Python 3. You will need python 3 installed and also pip. The python package requirements are
+ dna-factory is written in Python 3. You will need python 3 installed and also pip. The python package requirements are
   all in the requirements.txt file and can usually be installed by: 
  ```
 pip3 install -r requirements.txt
@@ -33,9 +33,9 @@ There are options to control the output location (default is a new subdir with a
 python3 pop_factory.py -h
 ```
 ### Output Files
-PopFactory outputs a collection of files each time it is run.
-* population.vcf.gz - VCF output file zipped with bgzip. Controls will follow the regular SNP frequency distribution
- for SNPs in the file.  Cases (population memeber with an affliction) will follow regular SNP frequencies except for
+dna-factory outputs a collection of files each time it is run.
+* population.vcf.gz - VCF output file zipped with bgzip. Controls will follow the normal SNP frequency distribution
+ for SNPs in the file.  Cases (population memeber with an affliction) will follow normal SNP frequencies but will have 
   selected deleterious SNPs.
 * population.fam - [fam file](https://www.cog-genomics.org/plink/1.9/formats#fam) with information on each sample. It
  will have the following columns:
@@ -46,10 +46,10 @@ PopFactory outputs a collection of files each time it is run.
  5. Sex code ('1' = male, '2' = female, '0' = unknown)
  6. Phenotype value ('1' = control, '2' = case, '-9'/'0'/non-numeric = missing data if case/control)
  * deleterious.json - JSON file with the selected deleterious SNPs. This file can be used as an input
-   to future PopFactory runs.
+   to future dna-factory runs.
  * pop_deleterious.txt - text file which maps sample IDs to deleterious groups and deleterious mutations
  * snps.json.gz - JSON file with the SNPs that were used to generate the VCF file. This file can be used as an input
-  to future PopFactory runs.
+  to future dna-factory runs.
  
  ## Generating Very Large Files
  If you want to generate a very large VCF file, there are two ways to speed things up:
@@ -57,8 +57,8 @@ PopFactory outputs a collection of files each time it is run.
  2. Run multiple jobs in parallel and merge the resulting VCF files
 
  ### Increasing Workers (Processes)
- PopFactory uses a parallel processing approach where there is one write process and multiple worker processes that
-  feed rows to the writer process. You can increase the throughput of PopFactory by increasing the number of workers:
+ dna-factory uses a parallel processing approach where there is one write process and multiple worker processes that
+  feed rows to the writer process. You can increase the throughput of dna-factory by increasing the number of workers:
 <pre>
 python3 pop_factory.py -s 10000 -c 10000 -x 5000000 -f 0.01 <strong>-n 7 -z 2</strong>
 </pre>
@@ -68,7 +68,7 @@ python3 pop_factory.py -s 10000 -c 10000 -x 5000000 -f 0.01 <strong>-n 7 -z 2</s
    is recommended to never set the number of workers higher than the number of available cores - 1.
 ### Running Multiple Parallel Jobs
 If you desire to make a very large VCF file (millions of SNPs), it may be desirable to generate portions of the file
- in parallel and merge them together. PopFactory supports easy use of [bcftools](http://www.htslib.org/doc/bcftools.html) 
+ in parallel and merge them together. dna-factory supports easy use of [bcftools](http://www.htslib.org/doc/bcftools.html) 
  to index and merge generated VCF files.
  
  To run multiple jobs in parallel, perform the following steps.
@@ -104,7 +104,7 @@ bcftools merge "path1/population.vcf.gz" "path2/population.vcf.gz"
 
 ## Deleterious.yml (deleterious config)
 
-PopFactory selects deleterious mutations based on a configuration file in yaml format. The default location is
+dna-factory selects deleterious mutations based on a configuration file in yaml format. The default location is
  "deleterious.yml" in the install directory. You can modify this file or create your own deleterious.yml config files
   to mimic many hypothetical scenarios. You can create multiple deleterious groups, polygenic groups, rare or common
    groups
@@ -159,10 +159,10 @@ mutation_weights:
 * min_minor_allele_freq - lower bound for minor allele frequency for SNPs in this group
 ## Using RefSNP Data
 
-By default, PopFactory generates SNPs based on a continuous distribution function created from RefSNP frequency data
+By default, dna-factory generates SNPs based on a continuous distribution function created from RefSNP frequency data
  (see snp_freq_cdf.csv for values). You can also download real RefSNP data from NIH and use it for SNP selection. The
   RefSNP dataset is very large and building a RefSNP database can take some time. The downloaded data is minimized to
-  only include data useful for PopFactory and stored in a SQL database (default SQLite). A fullly downloaded RefSNP
+  only include data useful for dna-factory and stored in a SQL database (default SQLite). A fully downloaded RefSNP
    SQLite DB can
   be over 70 GB on disk.
   
@@ -183,7 +183,7 @@ This will download data for chromosomes 1, 2, and X. It will use 4 worker proces
   the download job fails or needs to be stopped. The download process also used MD5 hashing to avoid redownloading
    files from NIH which have not changed (assuming the local tmp_download files are still on disk).
 
-To then use the built RefSNP DB, use the **-l** flag when running PopFactory. This will cause the code to pull SNP
+To then use the built RefSNP DB, use the **-l** flag when running dna-factory. This will cause the code to pull SNP
  data from the DB instead of generating simulated SNPs. For example:
  ```shell script
 python3 pop_factory.py -l -s 100 -c 100 -x 10000 -f 0.02
