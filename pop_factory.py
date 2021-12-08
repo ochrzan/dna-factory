@@ -637,7 +637,7 @@ class DeleteriousGroup:
 
 def parse_cmd_args(args):
     arg_parser = argparse.ArgumentParser(fromfile_prefix_chars='@',
-                                         prog='Population Factory',
+                                         prog='DNA Factory',
                                          description='Generates genetic populations using simulated SNP data.')
 
     arg_parser.add_argument('-s', type=int, dest='size', help='size of afflicted/case group', required=True)
